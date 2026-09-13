@@ -25,6 +25,9 @@ from cninfo_client import (
 
 # 报告类型配置
 # category 是巨潮的公告类别代码；date_range 给出该报告的披露时间窗（用于缩小搜索范围）
+# title_patterns 是标题识别模式：同类报告各公司写法差异极大，必须全部覆盖。
+#   实测：中国石油「2025年年报」、锦江酒店「锦江酒店年报」、金枫酒业「2025年年报全文」
+#   都不含「年度报告」，只用单一关键词会整批漏档。
 REPORT_TYPES = {
     "annual": {
         "label": "年报",
@@ -32,6 +35,7 @@ REPORT_TYPES = {
         "search_key": "年度报告",
         "filename_suffix": "年年度报告",
         "include_keyword": "年度报告",
+        "title_patterns": ("年度报告", "年报"),
         "date_range": lambda y: (f"{y + 1}-01-01", f"{y + 1}-06-30"),
     },
     "semi": {
@@ -40,6 +44,7 @@ REPORT_TYPES = {
         "search_key": "半年度报告",
         "filename_suffix": "年半年度报告",
         "include_keyword": "半年度报告",
+        "title_patterns": ("半年度", "半年报", "中期报告"),
         "date_range": lambda y: (f"{y}-07-01", f"{y}-12-31"),
     },
     "q1": {
@@ -49,21 +54,36 @@ REPORT_TYPES = {
         # 可同时命中"2026年第一季度报告"与"2026年一季度报告"两种标题写法
         "search_key": "一季度",
         "filename_suffix": "年第一季度报告",
-        "include_keyword": "一季度",
+        "include_keyword": "季度报告",
+        # 写法实测有四种："2023年第一季度报告" / "2023年一季度报告" /
+        # "创力集团第一季度季报" / "顾家家居2022年第一季度报" —— 必须只匹配"季度"核心词
+        "title_patterns": ("第一季度", "一季度", "一季报"),
         "date_range": lambda y: (f"{y}-03-01", f"{y}-06-30"),
     },
     "q3": {
         "label": "三季报",
         "category": "category_sjdbg_szsh",
-        "search_key": "第三季度报告",
+        # 标题写法有两种："2023年第三季度报告" 与 "2023年三季度报告"（实测后者约占 6 成）。
+        "search_key": "三季度",
         "filename_suffix": "年第三季度报告",
-        "include_keyword": "第三季度",
+        "include_keyword": "季度报告",
+        "title_patterns": ("第三季度", "三季度", "三季报"),
         "date_range": lambda y: (f"{y}-09-01", f"{y}-12-31"),
     },
 }
 
 # 排除关键词（摘要、更正、补充等）
-EXCLUDE_KEYWORDS = ["摘要", "更正", "补充", "修改", "英文", "已取消"]
+EXCLUDE_KEYWORDS = [
+    "摘要", "更正", "补充", "修改", "英文", "已取消",
+    # 兜底检索（去掉 category 的关键词全文搜索）会混入中介机构文件，
+    # 这些词只出现在督导/核查/法律意见类公告里，正规报告标题不会包含
+    "督导", "核查意见", "法律意见", "问询",
+]
+
+
+def match_report_title(title: str, report_type: str) -> bool:
+    """标题是否属于该类报告（任一写法命中即可）。"""
+    return any(p in title for p in REPORT_TYPES[report_type]["title_patterns"])
 
 
 def search_reports(
@@ -86,13 +106,10 @@ def search_reports(
 
 def filter_report(announcements: list, report_type: str = "annual"):
     """从公告列表中筛选出报告正本（排除摘要、更正等）。"""
-    rt = REPORT_TYPES[report_type]
-    include_kw = rt["include_keyword"]
-
     candidates = []
     for ann in announcements:
         title = ann["title"]
-        if include_kw not in title:
+        if not match_report_title(title, report_type):
             continue
         if any(kw in title for kw in EXCLUDE_KEYWORDS):
             continue
@@ -102,7 +119,7 @@ def filter_report(announcements: list, report_type: str = "annual"):
         # 放宽条件：只排除"摘要"
         for ann in announcements:
             title = ann["title"]
-            if include_kw in title and "摘要" not in title:
+            if match_report_title(title, report_type) and "摘要" not in title:
                 candidates.append(ann)
 
     if not candidates:

@@ -70,12 +70,16 @@ class DownloadError(Exception):
 def detect_column(stock: str) -> Optional[str]:
     """
     根据股票代码判断交易所。
-    6 开头 → sse（上交所），0/3 开头 → szse（深交所）
-    非数字（公司名称）返回 None，后续会两个交易所都试。
+    6 开头 → sse（上交所）；4/8/920 开头 → bj（北交所）；其余 → szse（深交所）
+    非数字（公司名称）返回 None，后续会各交易所都试。
     """
     code = stock.strip()
     if re.match(r"^\d{6}$", code):
-        return "sse" if code.startswith("6") else "szse"
+        if code.startswith("6"):
+            return "sse"
+        if code.startswith(("4", "8")) or code.startswith("920"):
+            return "bj"  # 北交所：430xxx / 83xxxx / 87xxxx / 920xxx
+        return "szse"
     return None
 
 
@@ -176,8 +180,9 @@ def query_announcements(
         "category": category,
         "trade": "",
         "seach": "",
-        "startDate": start_date,
-        "endDate": end_date,
+        # 巨潮真实参数是 seDate（"起始~结束"，波浪号分隔）。
+        # 传 startDate/endDate 会被服务端静默忽略，导致返回全时段最新公告。
+        "seDate": f"{start_date}~{end_date}",
         "isFuzzy": "true",
         "sortName": "",
         "sortOrder": "",
@@ -196,6 +201,10 @@ def query_announcements(
         raise DownloadError(f"网络错误: {e.reason}")
     except json.JSONDecodeError:
         raise DownloadError("巨潮 API 返回了非 JSON 格式的响应")
+    except OSError as e:
+        # 覆盖 TimeoutError / ConnectionResetError / http.client 远程断开等
+        # （这些不是 URLError，不补获会直接冒泡成未处理异常）
+        raise DownloadError(f"网络错误: {type(e).__name__}: {e}")
 
     announcements = result.get("announcements") or []
 
@@ -247,7 +256,7 @@ def query_with_stock(
 
     seen = set()
     merged = []
-    for col in ["sse", "szse"]:
+    for col in ["sse", "szse", "bj"]:
         try:
             results = query_announcements(
                 searchkey, col, start_date, end_date,
@@ -260,6 +269,108 @@ def query_with_stock(
                 seen.add(r["pdf_url"])
                 merged.append(r)
     return merged
+
+
+def query_by_stock(
+    stock_param: str,
+    column: str,
+    start_date: str,
+    end_date: str,
+    category: str = "",
+    searchkey: str = "",
+    page_size: int = 30,
+    max_pages: int = 40,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> list:
+    """
+    按「代码,orgId」精确定位单只股票，翻页取全部公告。
+
+    这是批量下载的正确入口：searchkey 传股票代码并不可靠（会串到别家公司），
+    而 stock 参数能精确锁定公司；seDate 才是生效的日期范围参数。
+
+    实测注意（巨潮服务端行为）：
+      - pageSize 实际上限为 30，传更大值也只返回 30 条，须靠 pageNum 翻页
+      - searchkey 与 category 同时为空时，接口退化为「最新 30 条」并置
+        hasMore=False —— 此时拿不到全量。招股书这类无 category 的场景
+        必须显式给 searchkey（如 "招股说明书"），否则会漏掉全部历史文档。
+
+    参数：
+      stock_param : 巨潮 stock 参数，形如 "600519,gssh0600519"
+      column      : sse / szse / bj
+      category    : 公告类别代码；空表示不限（招股书用空，需同时给 searchkey）
+      searchkey   : 全文搜索词；为空时必须给 category，否则只会返回最新 30 条
+      max_pages   : 翻页上限，防止异常死循环
+
+    返回：[{title, date, adjunct_url, pdf_url}, ...]
+    """
+    collected = []
+    seen = set()
+
+    for page in range(1, max_pages + 1):
+        data = urllib.parse.urlencode({
+            "pageNum": str(page),
+            "pageSize": str(page_size),
+            "column": column,
+            "tabName": "fulltext",
+            "plate": "",
+            "stock": stock_param,
+            "searchkey": searchkey,
+            "secid": "",
+            "category": category,
+            "trade": "",
+            "seach": "",
+            "seDate": f"{start_date}~{end_date}",
+            "isFuzzy": "true",
+            "sortName": "",
+            "sortOrder": "",
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            CNINFO_QUERY_URL, data=data, headers=QUERY_HEADERS, method="POST"
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise DownloadError(f"巨潮 API 请求失败: HTTP {e.code} {e.reason}", e.code)
+        except urllib.error.URLError as e:
+            raise DownloadError(f"网络错误: {e.reason}")
+        except json.JSONDecodeError:
+            raise DownloadError("巨潮 API 返回了非 JSON 格式的响应")
+
+        announcements = result.get("announcements") or []
+        if not announcements:
+            break
+
+        for ann in announcements:
+            title = ann.get("announcementTitle", "")
+            ts = ann.get("announcementTime", 0)
+            adjunct_url = ann.get("adjunctUrl", "")
+            if not title or not adjunct_url:
+                continue
+            if adjunct_url in seen:
+                continue
+            seen.add(adjunct_url)
+
+            date_str = ""
+            if ts:
+                try:
+                    date_str = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                except (ValueError, OSError):
+                    date_str = str(ts)
+
+            collected.append({
+                "title": title,
+                "date": date_str,
+                "adjunct_url": adjunct_url,
+                "pdf_url": CNINFO_PDF_BASE + adjunct_url,
+            })
+
+        if not result.get("hasMore"):
+            break
+
+    return collected
 
 
 # ─── PDF 下载 ───────────────────────────────────────────────
@@ -284,6 +395,8 @@ def download_pdf(
         raise DownloadError(f"PDF 下载失败: HTTP {e.code} {e.reason}", e.code)
     except urllib.error.URLError as e:
         raise DownloadError(f"PDF 下载网络错误: {e.reason}")
+    except OSError as e:
+        raise DownloadError(f"PDF 下载网络错误: {type(e).__name__}: {e}")
 
     if not data[:5] == b"%PDF-":
         raise DownloadError(
