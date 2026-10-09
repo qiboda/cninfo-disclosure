@@ -33,6 +33,7 @@ $target = Join-Path $here "fetch_by_date.py"
 $untilYear = [int]$Until.Substring(0, 4)
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
+$failedYears = @()
 for ($y = $From; $y -le $untilYear; $y++) {
     $since = "$y-01-01"
     $end = if ($y -eq $untilYear) { $Until } else { "$y-12-31" }
@@ -42,7 +43,22 @@ for ($y = $From; $y -le $untilYear; $y++) {
     Write-Host ("=" * 78)
     & $Python $target run --root $Root --since $since --until $end `
         --streams $Streams --report-year $y --workers $Workers
-    Write-Host "### $y 结束 exit=$LASTEXITCODE"
+    $code = $LASTEXITCODE
+    Write-Host "### $y 结束 exit=$code"
+    if ($code -ne 0) {
+        # fetch_by_date 现在会用 exit=2 报告「有区间没检索到」。历史的教训：
+        # 2022 年那轮 exit=0 + 候选 0 条，看起来像「这一年本来就没东西」，
+        # 实际是 504 把整年 6,893 条公告吞了。所以这里必须记账并最终非零退出。
+        $failedYears += $y
+        Write-Host "!!! $y 有区间检索失败或下载失败（exit=$code），该年**不完整**，修好后请重跑："
+        Write-Host "    pwsh -File $($MyInvocation.MyCommand.Name) -From $y -Until $end"
+    }
 }
 Write-Host ""
+if ($failedYears.Count -gt 0) {
+    Write-Host "回填结束，总耗时 $([math]::Round($sw.Elapsed.TotalMinutes,1)) 分钟"
+    Write-Host "⚠️ 以下年份不完整，需重跑：$($failedYears -join ', ')"
+    exit 2
+}
 Write-Host "回填全部完成，总耗时 $([math]::Round($sw.Elapsed.TotalMinutes,1)) 分钟"
+exit 0

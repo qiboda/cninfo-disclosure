@@ -75,6 +75,52 @@ python fetch_by_date.py migrate --root "C:\Users\iq112\Documents\cninfo"   # 旧
 落盘索引：`{root}/_state/by_date.jsonl`（追加）+ `{root}/manifest_by_date.csv`（全量重写）。
 日志：`{root}/_state/fetch_by_date-<时间戳>.log` 与 `{root}/_state/watch_season-<日期>.log`（均 UTF-8）。
 
+### 检索失败的三层防御，以及「静默丢档」这个坑
+
+**踩过的坑（最贵的一次）**：2026-10-11 回填 2022 年，巨潮对整个
+`2022-01-01~2022-12-31` 的业绩类公告返回 `504 Gateway Time-out`。当时的实现把
+`DownloadError` 一路抛到 `cmd_run` 的 `try/except`，于是 `picked` 变成空列表、
+日志只剩两行、**退出码还是 0**：
+
+```
+[21:51:10]   x 2022-01-01~2022-12-31 检索失败：巨潮 API HTTP 504 Gateway Time-out
+[21:51:10] 检索完成：候选正本 0 条，覆盖 0 个披露日；…… → 待下载 0 条
+```
+
+看起来完全像「这一年本来就没东西」，实际吞掉了 **6,893 条公告**（对照
+`probe_yjyg_years.py` 的规模测算）。凡是「失败」与「确实没有」共用同一条路径，
+就一定会丢数据。现在三层防御：
+
+1. **`_post` 内部退避重试** —— 4 次尝试、`1.5^i` 秒退避。只对瞬时错误重试：
+   `{408, 429, 500, 502, 503, 504}` 与网络层异常 / 非 JSON；4xx（除 429）是
+   请求本身不合法，立刻抛出。
+2. **`_fill_range` 对仍失败的区间二分重试** —— 504 多是「一次拉太多」，拆成两半
+   通常就能过。最多 `_MAX_FAIL_SPLIT = 9` 层（2⁹ 足够把一年拆到单日）。**只有
+   服务端负载类错误才拆**；断网/DNS 拆多细都一样，直接判失败。
+3. **失败记账 + 非零退出码** —— 连单日都失败就记进 `_FAILED_RANGES`，
+   `cmd_run` / `cmd_list` 结束时汇总成"检索健康检查"日志并 **`return 2`**。
+   `backfill_yjyg.ps1` 同样按年记账，末尾汇总不完整年份并以 `exit 2` 收尾。
+
+⚠️ 实现细节：`cninfo_client.DownloadError` 的状态码属性叫 **`status_code`**，
+不是 `code`。第一版防御代码写的是 `getattr(e, "code", None)` → 永远 `None`，
+于是 504 既没被二分也没被记账，**成了同一个 bug 的翻版**。现在统一走
+`_err_code(e)`（两个名字都认）。这个教训值得记住：判据取不到值时，
+`in` 判断会静默变成 `False`，不报错。
+
+回归测试（离线、不联网，改完 `_post`/`_fill_range`/`cmd_run` 后请跑一遍）：
+
+```bash
+python _test_retry.py    # 二分降级 / 退避重试 / 用尽重试 / 403 不重试
+python _test_exit.py     # 检索全挂 → cmd_run 退出码 2；检索正常无候选 → 0
+```
+
+真实回归（约 3 分钟，会重新拉 2022 全年）：
+
+```bash
+python fetch_by_date.py run --root "C:\Users\iq112\Documents\cninfo" \
+    --since 2022-01-01 --until 2022-12-31 --streams yjyg,yjkb --report-year 2022
+```
+
 ### 报告季值守：什么节奏、为什么滑动窗口
 
 ```powershell

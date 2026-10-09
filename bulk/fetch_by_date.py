@@ -77,6 +77,22 @@ PAGE_SIZE = 30          # 巨潮服务端硬上限
 # （例如 5 年一次查）不会更慢，反而省掉每天一次的请求开销。
 MAX_PAGES_DEFAULT = 250
 
+# ─── 检索失败的处理策略（血的教训，见 README「静默丢档」） ─────────────
+# 2026-10-11 回填 2022 年时，巨潮对整个 2022-01-01~2022-12-31 的业绩类公告
+# 直接返回 504 Gateway Time-out。原实现把 DownloadError 一路抛到 cmd_run 的
+# try/except，picked 变空、退出码仍为 0 —— **一整年 6,893 条公告被静默丢掉**，
+# 而且日志看起来像「这一年本来就没东西」。三层防御：
+#   1) `_post` 内部退避重试（对 5xx/429/网络抖动）
+#   2) `_fill_range` 对仍失败的区间二分重试（504 多半是「一次拉太多」，
+#      拆小通常就能过）
+#   3) 连单日都失败就记进 `_FAILED_RANGES`，由 cmd_run/cmd_list 汇总成
+#      **非零退出码** —— 宁可让调用方看到失败，也绝不静默丢档。
+_TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504}
+_RETRY_ROUNDS = 4          # _post 的尝试次数（含首次）
+_RETRY_BACKOFF = 1.5       # 退避基数：1.5^0, 1.5^1, 1.5^2 秒
+_MAX_FAIL_SPLIT = 9        # 失败二分的最大递归深度（2^9 可把一年拆到单日）
+_FAILED_RANGES = []        # [(since, until, 原因)]，进程内累计
+
 BY_DATE_DIR = "by_date"  # 日期目录的父目录名（避免与 reports/ prospectus/ _state/ 混在根下）
 SUBDIR = {"q3": "财报", "ipo": "IPO", "yjyg": "业绩预告", "yjkb": "业绩快报"}
 
@@ -163,21 +179,33 @@ def log(msg):
 
 # ─── 巨潮检索（全市场 + 区间 + 翻页） ────────────────────────
 
-def _post(params, timeout):
+def _post(params, timeout, attempts=_RETRY_ROUNDS):
+    """POST 巨潮检索接口，带指数退避重试。
+
+    只对**瞬时**错误重试：5xx / 429 / 网络层异常 / 非 JSON 响应。4xx（除 429）
+    是请求本身不合法，重试多少次都一样，立刻抛出。
+    """
     data = urllib.parse.urlencode(params).encode("utf-8")
-    req = urllib.request.Request(CNINFO_QUERY_URL, data=data, headers=QUERY_HEADERS,
-                                method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        raise DownloadError(f"巨潮 API HTTP {e.code} {e.reason}", e.code)
-    except urllib.error.URLError as e:
-        raise DownloadError(f"网络错误: {e.reason}")
-    except json.JSONDecodeError:
-        raise DownloadError("巨潮 API 返回非 JSON")
-    except OSError as e:
-        raise DownloadError(f"网络错误: {type(e).__name__}: {e}")
+    last = None
+    for i in range(attempts):
+        req = urllib.request.Request(CNINFO_QUERY_URL, data=data,
+                                     headers=QUERY_HEADERS, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            last = DownloadError(f"巨潮 API HTTP {e.code} {e.reason}", e.code)
+            if e.code not in _TRANSIENT_HTTP:
+                raise last          # 4xx 是请求本身不合法，重试无意义
+        except urllib.error.URLError as e:
+            last = DownloadError(f"网络错误: {e.reason}")
+        except json.JSONDecodeError:
+            last = DownloadError("巨潮 API 返回非 JSON")
+        except OSError as e:
+            last = DownloadError(f"网络错误: {type(e).__name__}: {e}")
+        if i + 1 < attempts:
+            time.sleep(_RETRY_BACKOFF ** i)
+    raise last
 
 
 def _parse_ann(a, fallback_day):
@@ -226,6 +254,21 @@ def _scan_into(store, category, searchkey, since, until, timeout, max_pages):
     return True
 
 
+def _err_code(e):
+    """取 DownloadError 的 HTTP 状态码。
+
+    注意：`cninfo_client.DownloadError` 的属性名是 **`status_code`**（不是
+    `code`）。这里故意两种都认 —— 早期版本用 `getattr(e, "code", None)` 判断
+    可重试性，结果永远是 None，于是 504 既没被二分也没被记账，正是要修的那个
+    静默丢档 bug 的翻版。
+    """
+    for attr in ("status_code", "code"):
+        v = getattr(e, attr, None)
+        if v is not None:
+            return v
+    return None
+
+
 def _fill_range(store, category, searchkey, since, until, timeout, max_pages,
                 depth=0):
     """区间检索；撞到翻页上限就二分区间递归，直到单日为止。
@@ -233,8 +276,31 @@ def _fill_range(store, category, searchkey, since, until, timeout, max_pages,
     这是「按区间一次拉全」的关键兜底 —— 巨潮 pageSize 硬上限 30，
     一个宽区间（比如一整年的三季报 ~5400 份 = 180 页）可能超过 max_pages。
     二分后每半区间结果减半，通常就能一次装下。
+
+    **请求失败也走二分**：巨潮对「一次拉太多」的区间查询会返回 504
+    Gateway Time-out（实测 2022 年整年的业绩类公告必挂）。`_post` 的重试
+    救不了这种服务端超时，但把同一个区间拆成两半、每半单独查通常就能过。
+    拆到单日仍失败才认输，并记进 `_FAILED_RANGES` 让退出码非零。
     """
-    if not _scan_into(store, category, searchkey, since, until, timeout, max_pages):
+    try:
+        capped = _scan_into(store, category, searchkey, since, until, timeout,
+                            max_pages)
+    except DownloadError as e:
+        # 只有服务端负载类错误值得二分；断网/DNS 拆多细都一样失败。
+        splittable = _err_code(e) in _TRANSIENT_HTTP
+        if splittable and since < until and depth < _MAX_FAIL_SPLIT:
+            mid = since + timedelta(days=(until - since).days // 2)
+            log(f"  ! {since}~{until} 检索失败（{e.message}），二分区间重试")
+            a = _fill_range(store, category, searchkey, since, mid, timeout,
+                            max_pages, depth + 1)
+            b = _fill_range(store, category, searchkey, mid + timedelta(days=1),
+                            until, timeout, max_pages, depth + 1)
+            return a or b
+        _FAILED_RANGES.append((since.isoformat(), until.isoformat(), e.message))
+        log(f"  x {since}~{until} 检索失败（已重试 {_RETRY_ROUNDS} 次）：{e.message}")
+        return False
+
+    if not capped:
         return False
     if since >= until or depth >= 12:
         return True                      # 单日仍撞上限：真的截断了
@@ -646,8 +712,27 @@ def collect_range(since, until, streams, year, timeout, max_pages):
     return picked
 
 
+def failed_summary():
+    """汇总本轮所有「彻底失败」的检索区间，返回失败区间数。
+
+    调用方必须拿它决定退出码 —— 这是「静默丢档」的最后一道闸门。
+    """
+    if not _FAILED_RANGES:
+        log("检索健康检查：全部区间成功")
+        return 0
+    log(f"  x 有 {len(_FAILED_RANGES)} 个区间检索彻底失败，"
+        f"其覆盖的公告**未进入候选**（不等于当天没有披露）：")
+    for since, until, why in _FAILED_RANGES[:20]:
+        log(f"      {since}~{until} :: {why}")
+    if len(_FAILED_RANGES) > 20:
+        log(f"      ……另有 {len(_FAILED_RANGES) - 20} 个区间，见上方 x 行")
+    log("  → 退出码非零；请重跑本区间（已归档的记录会自动跳过）")
+    return len(_FAILED_RANGES)
+
+
 def cmd_run(args):
     global _LOG_PATH
+    del _FAILED_RANGES[:]
     root = os.path.abspath(args.root)
     os.makedirs(os.path.join(root, "_state"), exist_ok=True)
     _LOG_PATH = os.path.join(root, "_state",
@@ -704,13 +789,17 @@ def cmd_run(args):
     if args.dry_run:
         log("--dry-run：不下载")
         idx.close()
-        return 0
+        return 2 if failed_summary() else 0
 
     if not todo:
         _, n = idx.write_csv()
         log(f"无新增。索引共 {n} 条 → {idx.csv}")
         idx.close()
-        return 0
+        bad = failed_summary()
+        if bad:
+            log(f"⚠️ {since}~{until} 有 {bad} 个区间的公告未取到，"
+                f"「无新增」不代表这一年完整 —— 请重跑")
+        return 2 if bad else 0
 
     ok = fail = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
@@ -738,11 +827,12 @@ def cmd_run(args):
         log(f"镜像：新增 {mirror.appended} 份三季报 → "
             f"{os.path.join(root, 'reports', str(args.report_year), 'q3')}"
             f"（manifest.csv 已并入并重排，共 {n} 行）")
-    return 0 if fail == 0 else 1
+    return 0 if fail == 0 and not failed_summary() else 1
 
 
 def cmd_list(args):
     """列出某天（或区间）会归档什么，不做下载。"""
+    del _FAILED_RANGES[:]
     since = date.fromisoformat(args.since)
     until = date.fromisoformat(args.until)
     streams = [s.strip() for s in args.streams.split(",") if s.strip()]
@@ -762,7 +852,7 @@ def cmd_list(args):
             total += 1
             print(f"  {kind:>4} {ann['code']} {ann['name']} | {ann['title'][:70]}")
     print(f"\n合计候选 {total} 条，覆盖 {len(by_day)} 个披露日")
-    return 0
+    return 2 if failed_summary() else 0
 
 
 def cmd_mirror(args):
