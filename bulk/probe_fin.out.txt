@@ -1,0 +1,32 @@
+======================================================================
+1) 库可用性
+======================================================================
+  --   pdfplumber   ModuleNotFoundError
+  --   pypdf        ModuleNotFoundError
+  --   PyPDF2       ModuleNotFoundError
+  OK   fitz         1.28.2
+  --   pdfminer     ModuleNotFoundError
+  --   pandas       ModuleNotFoundError
+  --   requests     ModuleNotFoundError
+  OK   numpy        2.5.3
+  --   bs4          ModuleNotFoundError
+  --   lxml         ModuleNotFoundError
+  --   openpyxl     ModuleNotFoundError
+
+======================================================================
+2) 已有业绩预告 / 业绩快报 PDF 抽样
+======================================================================
+  找到 22 份
+    by_date\2026-09-15\业绩预告\688216_气派科技股份有限公司2026年第三季度业绩预告的自愿性披露公告.pdf
+    by_date\2026-09-18\业绩预告\300497_富祥股份_2026年前三季度业绩预告.pdf
+    by_date\2026-09-29\业绩预告\688469_芯联集成电路制造股份有限公司2026年前三季度业绩预告的自愿性披露公告.pdf
+    by_date\2026-10-08\业绩预告\002536_飞龙股份_飞龙汽车部件股份有限公司2026年前三季度业绩预告.pdf
+
+  抽正文: by_date\2026-09-15\业绩预告\688216_气派科技股份有限公司2026年第三季度业绩预告的自愿性披露公告.pdf
+  pdfplumber 失败: ModuleNotFoundError("No module named 'pdfplumber'")
+  pypdf 也失败: ModuleNotFoundError("No module named 'pypdf'")
+
+======================================================================
+3) 东方财富结构化财务接口探测
+======================================================================
+  失败: ModuleNotFoundError("No module named 'requests'")

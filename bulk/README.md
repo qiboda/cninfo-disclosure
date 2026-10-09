@@ -178,6 +178,43 @@ category 取回的结果同时喂给两个正则，统计「两个都没命中�
 2025 年 10-10 起跳（47/35），10-28~10-31 为高峰（116/136/215/233），11 月初
 还有第二波（11-04:68、11-05:74）；2026 年 10-08 起跳（12 → 10-09:39 → 10-10:19）。
 
+## 成长性筛选（财报/预告 → 定性判断）
+
+把「本轮下载的 PDF」变成一张带评语的榜单。链路四步，可独立重跑：
+
+```bash
+# ① 抽数：PyMuPDF 解析 PDF → 金额/同比/变动原因，文本缓存到 _growth/text/
+python screen_growth.py extract --since 2026-09-01 --until 2026-12-31
+python show_growth.py check 301716          # 单只看抽取结果
+
+# ② 对账：拿东方财富数据中心当独立第二数据源，逐只比归母净利
+python xcheck_growth.py                     # 差异 0/22 → _growth/em_yjyg.json
+
+# ③ 分档：合并 PDF 与东财，算规模/增速/CAGR，打 A~X 档
+python rank_growth.py build                 # → _growth/rank_growth.csv|json
+python rank_growth.py print
+
+# ④ 渲染：榜单 + 逐只定性评语 → Markdown 报告
+python report_growth.py build               # → _growth/成长股筛选报告_2026Q3.md
+```
+
+**档位**（阈值集中在 `rank_growth.py` 的 `THRESHOLDS`）：`A 超级成长`（IPO/财报三年
+CAGR 营收≥25% 且净利≥30%，且净利≥1亿）、`B 高规模+高增速`、`C 高增速`（规模不足）、
+`D 仅规模`、`X 未盈利`、`E 观察`。
+
+**为什么必须有第②步**：PDF 正则抽取再小心也会错，而错法不会自曝。`xcheck_growth.py`
+用东财官方口径做第二次独立测量 —— 力勤资源 001246 的三年营收/归母净利被东财年报库
+复核到**四位小数完全一致**，沃华医药 002107 营收 `588,844,408.64` / 净利
+`92,654,514.94` 亦完全吻合。22 份业绩预告可比对 19 份，**差异 0 例**；其余 3 份
+（688103 / 603228 / 688216）是自愿性披露，东财未收录。
+
+**评语为什么硬编码在 `report_growth.py` 的 `NOTES` 字典里**：这些判断来自逐份读原文
+（`_growth/text/*.txt`），没有可自动化的口径；写死在脚本里才能让报告可重生成、
+每次改动都在 diff 里可审计。**改评语就改那个字典，别手改生成的 `.md`。**
+
+`report_growth.py` 会把报告与榜单同时写进 `--out` 目录；交付副本放在
+`C:\Users\iq112\Documents\cninfo\analysis\2026Q3-成长股筛选\`。
+
 ## 一次性探针（保留作为排查过程存档）
 
 `probe.py` / `probe2.py`（巨潮 API 参数、分页、招股书检索姿势）、`debug1.py`~`debug4.py`（三季报标题变体、北交所代码重复、分页上限、招股书 0 命中根因）、
@@ -189,7 +226,18 @@ category 取回的结果同时喂给两个正则，统计「两个都没命中�
 「2026 三季报是否真的只有 1 份」）、`probe_yjyg.py` / `probe_yjyg2.py` / `probe_yjyg3.py`
 （业绩预告的检索姿势）、`probe_yjyg_cat.py`（**验证 category_yjygjxz_szsh 真过滤且全覆盖**）、
 `probe_yjyg_years.py`（按年估算业绩类公告规模，跑回填前用它算工作量）、
-`probe_yjyg_gap.py`（**量化两个正则的漏口，实测 0**）。
+`probe_yjyg_gap.py`（**量化两个正则的漏口，实测 0**）、
+`probe_fin.py` / `probe_fin2.py`（验证东财 `RPT_PUBLIC_OP_NEWPREDICT` /
+`RPT_LICO_FN_CPD` 两个端点的取数姿势，是 `xcheck_growth.py` 的前身）。
+
+成长性筛选的调试脚本（抽取层排错过程的存档，全部只读）：
+`_dbg9.py`（把 10 家 IPO 的每个数字回溯到招股书原文句子）、
+`_dbg10.py`（`extract.json` 的字段盘点）、
+`_dbg11.py`（东财原始行按 `PREDICT_FINANCE` 口径打印 —— 就是它暴露出
+「一只票一行一个口径」这个坑）、
+`_dbg12.py`（导出 A/B/C 档的 `reason`/`main_biz` 定性素材 → `_qual.txt`）、
+`_dbg13.py` / `_dbg14.py`（把 IPO 历史财务拿去和东财年报库对账）。
+`_dbg.py` ~ `_dbg8.py` 是更早的迭代版本，保留作为排查痕迹。
 
 参考存档：`refs/history-notice.js` —— 巨潮公告检索页的前端包，内含**全部 67 个权威
 category 码**。以后新增数据流时先 grep 它，别再猜拼法。

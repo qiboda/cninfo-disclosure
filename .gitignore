@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# 抽取过程中的 PDF 文本缓存（可由 bulk/screen_growth.py 从 PDF 重新生成，体积大不入库）
+bulk/_growth/text/
+
