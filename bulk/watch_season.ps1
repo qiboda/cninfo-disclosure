@@ -29,7 +29,8 @@
     守护宕机数周后仍自动补齐漏掉的披露日。
 
 .PARAMETER Streams
-    抓取流，默认 `q3,ipo,yjyg`。加 `yjkb` 可一并抓业绩快报。
+    抓取流，默认 `q3,ipo,yjyg,yjkb`。yjyg（业绩预告）与 yjkb（业绩快报）共用同一次
+    category 检索，加 yjkb 不额外发请求。
 
 .PARAMETER ReportYear
     定期报告所属年份，0 表示取当前年份。
@@ -45,7 +46,7 @@ param(
     [string]$Root = "C:\Users\iq112\Documents\cninfo",
     [int]$IntervalHours = 4,
     [int]$CatchUpDays = 21,
-    [string]$Streams = "q3,ipo,yjyg",
+    [string]$Streams = "q3,ipo,yjyg,yjkb",
     [int]$ReportYear = 0,
     [string]$Until = "2026-11-05",
     [string]$Python = "python"

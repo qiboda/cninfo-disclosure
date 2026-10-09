@@ -27,21 +27,25 @@
 
 | 文件 | 用途 |
 |---|---|
-| `fetch_by_date.py` | **按日期增量抓取**。把最新一批三季报 / IPO 招股书 / 业绩预告落到 `{root}/by_date/{YYYY-MM-DD}/财报|IPO|业绩预告/`，目录名即披露日期。子命令 `run`（下载）/ `list`（只列出）/ `mirror`（补镜像）/ `migrate`（旧目录搬迁） |
+| `fetch_by_date.py` | **按披露日期增量抓取**。把最新一批三季报 / IPO 招股书 / 业绩预告 / 业绩快报落到 `{root}/by_date/{YYYY-MM-DD}/财报|IPO|业绩预告|业绩快报/`，目录名即披露日期。子命令 `run`（下载）/ `list`（只列出）/ `mirror`（补镜像）/ `migrate`（旧目录搬迁） |
 | `watch_season.ps1` | **报告季值守守护**。按固定间隔循环调用 `run`，每轮取「最近 N 天」滑动窗口，漏跑自愈（见下） |
+| `backfill_yjyg.ps1` | **历史回填**「业绩预告 + 业绩快报」到 `by_date/`。按年循环（理由见脚本注释） |
 | `check_manifest.py` | 快速核对 `manifest.csv`：行数、排序、按类型×年份分布、指向文件是否存在。搬镜像 / 搬迁目录后跑一次 |
 
-数据流（`--streams`，逗号分隔，默认 `q3,ipo,yjyg`）：
+数据流（`--streams`，逗号分隔，默认 `q3,ipo,yjyg,yjkb`）：
 
 | 流 | 内容 | 落盘 |
 |---|---|---|
 | `q3` | 三季报正本 | `by_date/{日期}/财报/` + 镜像进 `reports/{年}/q3/` |
 | `ipo` | 首发招股说明书 | `by_date/{日期}/IPO/` |
 | `yjyg` | 业绩预告族（预告/预增/预盈/预减/预亏/预平，含修正稿） | `by_date/{日期}/业绩预告/` |
-| `yjkb` | 业绩快报 | `by_date/{日期}/业绩快报/`（默认不启用，加进 `--streams` 即可） |
+| `yjkb` | 业绩快报 | `by_date/{日期}/业绩快报/` |
+
+`yjyg` 与 `yjkb` **共用同一次 category 检索**（业绩快报本来就在
+`category_yjygjxz_szsh` 的结果里），所以启用 `yjkb` 不额外发任何请求。
 
 与 `bulk_cninfo.py` 的分工：后者是**存量全量**（5,927 只股票 × 类型 × 年份，
-落 `reports/{年}/{类型}/`）；前者是**增量按日**（全市场 + `seDate` 单日检索，
+落 `reports/{年}/{类型}/`）；前者是**增量按披露日期**（全市场 + `seDate` 区间检索，
 落 `by_date/{披露日期}/`），用于跟踪「正在披露中」的报告季。
 
 **两份落盘同时进行**：三季报除落到日期目录外，还会**硬链接**一份到既有结构
@@ -150,6 +154,18 @@ http://www.cninfo.com.cn/new/js/app/disclosure/notice/history-notice.js?v=...
 股权激励业绩考核指标 / 业绩补偿进展等噪声。现在 category 已把这些噪声挡在门外，
 正则只负责在 category 结果里分流 预告 vs 快报。）
 
+**这两个正则会漏掉东西吗？不会 —— 实测 0 漏口。** `probe_yjyg_gap.py` 把
+category 取回的结果同时喂给两个正则，统计「两个都没命中」的条数：
+
+| 窗口 | category 取回 | 预告正则 | 快报正则 | 两个都没命中 |
+|---|---|---|---|---|
+| 2025-04 一季报预告轮 | 373 | 287 | 99 | **0** |
+| 2026-01 年报预告轮（最大一轮） | 3098 | 3029 | 70 | **0** |
+| 2025-10 三季报预告轮 | 129 | 122 | 7 | **0** |
+
+即 category 的结果被两个正则 100% 覆盖，不存在被静默丢弃的条目。
+（`2026-01` 单月 3098 条就是全年最大的一轮 —— 年报预告。）
+
 注意 `YJYG_EXTRA_EXCLUDE` **故意不继承** `reports.EXCLUDE_KEYWORDS`：那份清单含
 「更正/补充/修改」，而「业绩预告更正公告」恰恰是有独立披露日期、且会改变预告数值
 的必须留下的文件。
@@ -168,7 +184,15 @@ http://www.cninfo.com.cn/new/js/app/disclosure/notice/history-notice.js?v=...
 `probe5.py`~`probe9.py`（年报正本不在 category、标题变体、残留漏档查证）、`diag_missing.py` / `diag2.py`（早期归因尝试，判据有误已被 `diag3.py` 取代）。
 另有 2026-10 新增的日期检索探针：`probe_date.py`（全市场+日期区间可行性）、
 `probe_date2.py`（用 2025-10 窗口对照验证 category 是否在全市场模式下生效）、
-`probe_new.py`（盘点既有数据集清单的最新披露日期）、`probe_scale.py`（两种口径规模测算）。
+`probe_new.py`（盘点既有数据集清单的最新披露日期）、`probe_scale.py`（两种口径规模测算）、
+`probe_q3verify.py` / `probe_q3verify2.py` / `probe_q3verify3.py`（三轮独立路径核查
+「2026 三季报是否真的只有 1 份」）、`probe_yjyg.py` / `probe_yjyg2.py` / `probe_yjyg3.py`
+（业绩预告的检索姿势）、`probe_yjyg_cat.py`（**验证 category_yjygjxz_szsh 真过滤且全覆盖**）、
+`probe_yjyg_years.py`（按年估算业绩类公告规模，跑回填前用它算工作量）、
+`probe_yjyg_gap.py`（**量化两个正则的漏口，实测 0**）。
+
+参考存档：`refs/history-notice.js` —— 巨潮公告检索页的前端包，内含**全部 67 个权威
+category 码**。以后新增数据流时先 grep 它，别再猜拼法。
 
 ## 踩过的坑（原工具的真实缺陷）
 

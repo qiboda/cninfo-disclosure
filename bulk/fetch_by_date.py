@@ -884,9 +884,10 @@ def build_parser():
         sp.add_argument("--root", "-o", required=True, help="落盘根目录")
         sp.add_argument("--since", required=True, help="起始披露日 YYYY-MM-DD")
         sp.add_argument("--until", required=True, help="结束披露日 YYYY-MM-DD")
-        sp.add_argument("--streams", default="q3,ipo,yjyg",
+        sp.add_argument("--streams", default="q3,ipo,yjyg,yjkb",
                         help="逗号分隔：q3=三季报 ipo=招股书 yjyg=业绩预告 "
-                             "yjkb=业绩快报（默认 q3,ipo,yjyg）")
+                             "yjkb=业绩快报（默认 q3,ipo,yjyg,yjkb；"
+                             "yjyg/yjkb 共用同一次 category 检索，加 yjkb 不额外发请求）")
         sp.add_argument("--report-year", type=int, default=date.today().year,
                         help="定期报告所属年份（默认今年）")
         sp.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
