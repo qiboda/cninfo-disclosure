@@ -1,0 +1,69 @@
+==============================================================================
+### 1. 一条已知业绩预告的原始 JSON 全字段
+    返回 4 条；顶层字段 keys = ['announcements', 'categoryList', 'classifiedAnnouncements', 'hasMore', 'totalAnnouncement', 'totalRecordNum', 'totalSecurities', 'totalpages']
+    第一条 keys = ['adjunctSize', 'adjunctType', 'adjunctUrl', 'announcementContent', 'announcementId', 'announcementTime', 'announcementTitle', 'announcementType', 'announcementTypeName', 'associateAnnouncement', 'batchNum', 'columnId', 'id', 'important', 'orgId', 'orgName', 'pageColumn', 'secCode', 'secName', 'secNameList', 'shortTitle', 'storageTime', 'tileSecName']
+    ── 全字段 ──
+      adjunctSize              = 68
+      adjunctType              = PDF
+      adjunctUrl               = finalpage/2026-10-10/1225599954.PDF
+      announcementContent      = 
+      announcementId           = 1225599954
+      announcementTime         = 1791561600000
+      announcementTitle        = 2026年前三季度业绩预告
+      announcementType         = 01010503||010112||012111
+      announcementTypeName     = None
+      associateAnnouncement    = None
+      batchNum                 = None
+      columnId                 = 09020202||250101||251302
+      id                       = None
+      important                = None
+      orgId                    = 9900046622
+      orgName                  = None
+      pageColumn               = SZZB
+      secCode                  = 001389
+      secName                  = 广合科技
+      secNameList              = None
+      shortTitle               = 2026年前三季度业绩预告
+      storageTime              = None
+      tileSecName              = 广合科技
+
+==============================================================================
+### 2. 候选 category 逐个判别：是「真筛选」还是「被静默忽略」
+    判别法：与「完全不传 category」的返回指纹对比，一致 = 被忽略
+    基线（不传 category）: 30 条 hasMore=True
+    基线指纹: ['1225600225', '1225600204', '1225600203']
+
+    category_yjyg_szsh                30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjkb_szsh                30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg                     30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjkb                     30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_sz                  30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_sh                  30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_szsh_bj             30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_szsh_new            30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_cg_yjyg_szsh             30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_szshn               30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_szshb               30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_szsh_sz             30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_yjyg_szsh_sh             30 条  ❌ IGNORED（与基线一致 → 代码无效）  样本: 关于股东股份被司法强制卖出的公告
+    category_bcgz_szsh                 5 条  🔎 不同（需人工看）  样本: 关于召开2026年第四次临时股东会通知的更正公告
+    category_ndbg_szsh                 0 条  ✅ VALID（0 条，真筛选）  样本: 
+
+==============================================================================
+### 3. 已知有效对照：category_sjdbg_szsh（三季报）在 10 月窗口
+    1 条 hasMore=False 指纹与基线一致? False
+      002107 沃华医药 | 2026年三季度报告
+
+==============================================================================
+### 4. searchkey 覆盖度对比（2026-10-01~2026-10-31）：哪几个词并集最全
+    searchkey=业绩预告             →   15 条
+    searchkey=业绩预增             →    5 条
+    searchkey=业绩预减             →    0 条
+    searchkey=业绩预亏             →    0 条
+    searchkey=业绩预盈             →    0 条
+    searchkey=业绩快报             →    1 条
+    searchkey=业绩预告修正           →    0 条
+    searchkey=前三季度业绩           →   18 条
+    searchkey=第三季度业绩           →    4 条
+    searchkey=业绩               →   85 条
+    10 个词的并集 → 85 条

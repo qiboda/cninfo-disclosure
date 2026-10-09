@@ -4,14 +4,21 @@
 fetch_by_date.py · 按「披露日期」归档巨潮增量文档
 
 用户口径：
-    把最新一批【定期报告】（默认 2026 年三季报）与【IPO 招股说明书】下载到
-    {root}/by_date/{YYYY-MM-DD}/ 下，目录名即该文件的披露日期 —— 一眼看出哪天发布。
+    把最新一批【定期报告】（默认 2026 年三季报）、【IPO 招股说明书】与
+    【业绩预告】下载到 {root}/by_date/{YYYY-MM-DD}/{财报|IPO|业绩预告}/ 下，
+    目录名即该文件的披露日期 —— 一眼看出哪天发布。
     三季报额外镜像一份到既有结构 {root}/reports/{年}/q3/ 并追加进 manifest.csv，
     让原数据集口径同样完整（镜像用硬链接，不额外占空间）。
 
+流（--streams，逗号分隔）：
+    q3    三季报正本       → by_date/{日期}/财报/       （额外镜像进 reports/{年}/q3/）
+    ipo   首发招股说明书   → by_date/{日期}/IPO/
+    yjyg  业绩预告族       → by_date/{日期}/业绩预告/   （预告/预增/预盈/预减/预亏/预平，含修正稿）
+    yjkb  业绩快报         → by_date/{日期}/业绩快报/   （默认不启用）
+
 与 bulk_cninfo.py 的分工：
     bulk_cninfo.py = 全量/存量抓取（5,927 只股票 × 类型 × 年份 → reports/{年}/{类}/）
-    本脚本         = 增量/按日期抓取（全市场 + seDate 单日检索 → by_date/{日期}/财报|IPO/）
+    本脚本         = 增量/按日期抓取（全市场 + seDate 单日检索 → by_date/{日期}/…）
 
 为什么按「单日」检索，而不是一个大区间：
     1) 巨潮 pageSize 上限是 30，大区间（如整个三季报季约 5,400 份）会撞分页上限，
@@ -33,6 +40,7 @@ fetch_by_date.py · 按「披露日期」归档巨潮增量文档
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import random
@@ -63,14 +71,19 @@ from prospectus import detect_board, filter_prospectus  # noqa: E402
 from reports import EXCLUDE_KEYWORDS, REPORT_TYPES, filter_report  # noqa: E402
 
 PAGE_SIZE = 30          # 巨潮服务端硬上限
-# 单日单流翻页上限。140 × 30 = 4200 条：2025 年三季报季实测最大单日候选为
-# 1732 条（含 category + searchkey 两条检索路径取并集），留一倍余量。
-# 压低这个值只会让爆量日静默截断（有 capped 告警但数据已缺），调高无代价 ——
-# 分页循环遇到 hasMore=False 就会停。
-MAX_PAGES_DEFAULT = 140
+# 单次「区间检索」的翻页上限。250 × 30 = 7500 条 —— 一整年的三季报（约 5,400 份
+# = 180 页）能一次装下；装不下时 `_fill_range` 会自动二分区间递归，不会静默截断。
+# 注意：翻页次数只取决于「结果总数 / 30」，跟区间开多宽无关，所以把区间放宽
+# （例如 5 年一次查）不会更慢，反而省掉每天一次的请求开销。
+MAX_PAGES_DEFAULT = 250
 
 BY_DATE_DIR = "by_date"  # 日期目录的父目录名（避免与 reports/ prospectus/ _state/ 混在根下）
-SUBDIR = {"q3": "财报", "ipo": "IPO"}
+SUBDIR = {"q3": "财报", "ipo": "IPO", "yjyg": "业绩预告", "yjkb": "业绩快报"}
+
+# 同一家公司同一天可能披露多份（如「业绩预告」+「业绩预告修正」同时挂网），
+# 这些流不能用 `kind|code|date` 当唯一键，否则第二份会被判为「已归档」而漏掉。
+# 追加标题哈希做区分；q3/ipo 保持原键格式，以免既有 by_date.jsonl 记录失配。
+MULTI_PER_DAY = {"yjyg", "yjkb"}
 
 # 三季报「正本」识别（关键）。巨潮的 category_sjdbg_szsh 是「季度报告」大类，
 # 实测会把每季度初集中披露的【可转债转股情况公告】【股票期权自主行权结果公告】
@@ -89,6 +102,43 @@ Q3_EXTRA_EXCLUDE = [
     "转股", "行权", "激励", "督导", "核查意见", "法律意见", "问询",
     "摘要", "更正", "补充", "修改", "英文", "已取消",
 ] + EXCLUDE_KEYWORDS
+
+# 业绩预告 / 业绩快报识别。
+#
+# 【关键】业绩预告**有**可用的 category，代码是 `category_yjygjxz_szsh`
+# （yjyg + jxz = 业绩预告及修正）。这个码从巨潮公告检索页的前端包里抠出来的：
+#   http://www.cninfo.com.cn/new/js/app/disclosure/notice/history-notice.js
+#   → {"key": "category_yjygjxz_szsh", "value": "业绩预告"}
+# 那个页面里完整的 67 个 category 是权威清单，**不要再靠猜拼法**。
+#
+# 踩过的坑：`category_yjyg_szsh` / `category_yjkb_szsh` / `category_yjyg` 等
+# 十余种「看起来对」的拼法全部不存在，而巨潮对无效 category 的处理是
+# **静默忽略** —— 不报错，直接退化成「全市场最新 30 条」（返回的是
+# 「关于股东股份被司法强制卖出的公告」这类无关公告）。判别方法：把带 category
+# 的返回 announcementId 与「完全不传 category」的基线做指纹比对，一致即被忽略。
+#
+# 实测（`probe_yjyg_cat.py`，2025-10 整月 / 2026-10-01~11 两窗口）：
+#   | 窗口           | category | searchkey=业绩 宽词 | 宽词正则命中 | category 漏掉 |
+#   | 2025-10 整月   |     129  |               1355 |         122 |            0 |
+#   | 2026-10-01~11  |      20  |                 85 |          19 |            0 |
+# → category 不但真过滤（噪声≈0），而且**全覆盖**正则能抓到的东西；
+#   多出来的 7 条全部是业绩快报，即该 category 本身就含「业绩快报」。
+#   所以检索量比宽词降一个数量级，且不必再靠搜索词兜底。
+#
+# 为什么不再用 `searchkey=业绩` 宽词：它还额外返回「业绩说明会 / 业绩考核指标 /
+# 业绩补偿进展 / 业绩异常专项核查意见」等噪声（2025-10 是 1355 vs 129），
+# 白白多翻 40 页。category 直接给干净集合。
+YJYG_CATEGORY = "category_yjygjxz_szsh"
+# 「业绩预告」族（预增/预盈/预减/预亏/预平都是预告的强弱表述，属同一披露类型）。
+YJYG_TITLE_RE = re.compile(r"业绩\s*(预告|预增|预盈|预减|预亏|预平)")
+# 「业绩快报」是另一种文件（已审财务数据的自愿快报），单独成流，不混进 yjyg。
+YJKB_TITLE_RE = re.compile(r"业绩\s*快报")
+# 排除词：category 已经很干净，这里只做兜底（既有的英文版 / 已取消公告等）。
+#
+# 这里**故意不继承** reports.EXCLUDE_KEYWORDS：那份清单含「更正/补充/修改」，
+# 而「业绩预告更正公告」恰恰是必须留下的独立披露（它有自己的披露日期，且会改变
+# 预告数值）。同一个坑别踩第二次。
+YJYG_EXTRA_EXCLUDE = ["英文", "已取消", "摘要"]
 
 
 _log_lock = threading.Lock()
@@ -111,7 +161,7 @@ def log(msg):
                 pass
 
 
-# ─── 巨潮检索（全市场 + 单日 + 翻页） ────────────────────────
+# ─── 巨潮检索（全市场 + 区间 + 翻页） ────────────────────────
 
 def _post(params, timeout):
     data = urllib.parse.urlencode(params).encode("utf-8")
@@ -130,48 +180,90 @@ def _post(params, timeout):
         raise DownloadError(f"网络错误: {type(e).__name__}: {e}")
 
 
-def scan_day(category, searchkey, day, timeout=DEFAULT_TIMEOUT,
-             max_pages=MAX_PAGES_DEFAULT):
-    """检索「某一天披露」的全市场公告，翻页取全。返回解析后的公告列表。"""
-    out, seen = [], set()
-    capped = False
+def _parse_ann(a, fallback_day):
+    url = a.get("adjunctUrl") or ""
+    title = (a.get("announcementTitle") or "").strip()
+    if not url or not title:
+        return None, None
+    ts = a.get("announcementTime") or 0
+    try:
+        d = (datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d") if ts
+             else fallback_day)
+    except (ValueError, OSError):
+        d = fallback_day
+    return url, {
+        "title": title,
+        "date": d,
+        "adjunct_url": url,
+        "pdf_url": CNINFO_PDF_BASE + url,
+        "code": (a.get("secCode") or a.get("stockCode") or "").strip(),
+        "name": (a.get("secName") or "").strip(),
+    }
+
+
+def _scan_into(store, category, searchkey, since, until, timeout, max_pages):
+    """把 [since, until]（date 对象）区间内披露的公告并入 store（键 = adjunctUrl）。
+
+    返回 True 表示撞到了翻页上限、区间内的结果**可能不全**。
+    """
     for page in range(1, max_pages + 1):
         r = _post({
             "pageNum": str(page), "pageSize": str(PAGE_SIZE), "column": "szse",
             "tabName": "fulltext", "plate": "", "stock": "", "searchkey": searchkey,
             "secid": "", "category": category, "trade": "", "seach": "",
-            "seDate": f"{day}~{day}", "isFuzzy": "true", "sortName": "",
-            "sortOrder": "",
+            "seDate": f"{since.isoformat()}~{until.isoformat()}",
+            "isFuzzy": "true", "sortName": "", "sortOrder": "",
         }, timeout)
         anns = r.get("announcements") or []
         if not anns:
-            break
+            return False
         for a in anns:
-            url = a.get("adjunctUrl") or ""
-            title = a.get("announcementTitle") or ""
-            if not url or not title:
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            ts = a.get("announcementTime") or 0
-            try:
-                d = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d") if ts else day
-            except (ValueError, OSError):
-                d = day
-            out.append({
-                "title": title,
-                "date": d,
-                "adjunct_url": url,
-                "pdf_url": CNINFO_PDF_BASE + url,
-                "code": (a.get("secCode") or a.get("stockCode") or "").strip(),
-                "name": (a.get("secName") or "").strip(),
-            })
+            url, rec = _parse_ann(a, since.isoformat())
+            if url and url not in store:
+                store[url] = rec
         if not r.get("hasMore"):
-            break
-        if page == max_pages:
-            capped = True
-    return out, capped
+            return False
+    return True
+
+
+def _fill_range(store, category, searchkey, since, until, timeout, max_pages,
+                depth=0):
+    """区间检索；撞到翻页上限就二分区间递归，直到单日为止。
+
+    这是「按区间一次拉全」的关键兜底 —— 巨潮 pageSize 硬上限 30，
+    一个宽区间（比如一整年的三季报 ~5400 份 = 180 页）可能超过 max_pages。
+    二分后每半区间结果减半，通常就能一次装下。
+    """
+    if not _scan_into(store, category, searchkey, since, until, timeout, max_pages):
+        return False
+    if since >= until or depth >= 12:
+        return True                      # 单日仍撞上限：真的截断了
+    mid = since + timedelta(days=(until - since).days // 2)
+    a = _fill_range(store, category, searchkey, since, mid, timeout, max_pages,
+                    depth + 1)
+    b = _fill_range(store, category, searchkey, mid + timedelta(days=1), until,
+                    timeout, max_pages, depth + 1)
+    return a or b
+
+
+def scan_range(category, searchkey, since, until, timeout=DEFAULT_TIMEOUT,
+               max_pages=MAX_PAGES_DEFAULT):
+    """检索 [since, until] 区间内披露的全市场公告。
+
+    返回 (公告列表, capped)。每条公告自带 date 字段，调用方按它分桶即可 ——
+    所以一次区间检索就能填出多天的日期目录，不必一天发一个请求。
+    """
+    store = {}
+    capped = _fill_range(store, category, searchkey, since, until, timeout,
+                         max_pages)
+    return list(store.values()), capped
+
+
+def scan_day(category, searchkey, day, timeout=DEFAULT_TIMEOUT,
+             max_pages=MAX_PAGES_DEFAULT):
+    """单日检索（薄封装，便于探针/调试）。"""
+    d = date.fromisoformat(day) if isinstance(day, str) else day
+    return scan_range(category, searchkey, d, d, timeout, max_pages)
 
 
 # ─── 正本挑选 ───────────────────────────────────────────────
@@ -204,6 +296,43 @@ def pick_ipo(anns):
     return filter_prospectus(anns)
 
 
+def pick_all(anns, pattern, year=None, extra_exclude=YJYG_EXTRA_EXCLUDE):
+    """从一组公告里挑出**全部**匹配项（业绩预告族用）。
+
+    与 pick_q3 的关键差别：三季报每家每季只有一份正本，故取一条；而业绩预告
+    可能有「预告」+「预告修正」同日挂网，取一条会漏，故全部返回、按标题去重。
+    """
+    y = str(year) if year else ""
+    hits, seen = [], set()
+    for a in anns:
+        t = a["title"].strip()
+        if not pattern.search(t):
+            continue
+        if any(kw in t for kw in extra_exclude):
+            continue
+        key = (a["code"], t)
+        if key in seen:
+            continue
+        seen.add(key)
+        hits.append(a)
+    if y:
+        # 带目标年份的排在前面（防止往年同题材公告混入），但不丢弃其它
+        hits.sort(key=lambda x: (0 if y in x["title"] else 1, len(x["title"])))
+    return hits
+
+
+def pick_yjyg(anns, year=None):
+    """业绩预告族（预告/预增/预盈/预减/预亏/预平，含修正稿）。"""
+    return pick_all(anns, YJYG_TITLE_RE, year)
+
+
+def pick_yjkb(anns, year=None):
+    """业绩快报。"""
+    return pick_all(anns, YJKB_TITLE_RE, year, extra_exclude=[
+        "说明会", "业绩说明", "摘要", "问询", "督导", "核查意见",
+    ])
+
+
 # ─── 状态 ───────────────────────────────────────────────────
 
 class Index:
@@ -233,11 +362,15 @@ class Index:
         self.fh = open(self.jsonl, "a", encoding="utf-8")
 
     @staticmethod
-    def key(kind, code, date_str):
-        return f"{kind}|{code}|{date_str}"
+    def key(kind, code, date_str, title=""):
+        base = f"{kind}|{code}|{date_str}"
+        if kind in MULTI_PER_DAY:
+            h = hashlib.md5((title or "").strip().encode("utf-8")).hexdigest()[:8]
+            return f"{base}|{h}"
+        return base
 
-    def has(self, kind, code, date_str):
-        return self.key(kind, code, date_str) in self.records
+    def has(self, kind, code, date_str, title=""):
+        return self.key(kind, code, date_str, title) in self.records
 
     def add(self, rec):
         with self.lock:
@@ -395,6 +528,16 @@ def archive_one(kind, ann, root, idx, mirror=None, force=False, timeout=120):
         suffix = REPORT_TYPES["q3"]["filename_suffix"]      # "年第三季度报告"
         year = ann.get("year") or date.fromisoformat(d).year
         filename = safe_filename(f"{code}_{name}_{year}{suffix}.pdf")
+    elif kind in ("yjyg", "yjkb"):
+        # 用公告标题本身做文件名（业绩预告的标题自带期间，如「2026年前三季度业绩预告」，
+        # 比代码+简称更能说明是哪一期）。标题里若已含公司简称就不重复拼，避免超长。
+        title = ann["title"].strip()
+        base = f"{code}_{title}" if (name and name in title) else f"{code}_{name}_{title}"
+        if len(base) > 120:
+            # 个别公告标题极长（带「关于……的公告」全套修饰），Windows 单路径
+            # 上限 260 字符，截断并挂短哈希防同名碰撞。
+            base = base[:110] + "_" + hashlib.md5(base.encode("utf-8")).hexdigest()[:6]
+        filename = safe_filename(base + ".pdf")
     else:
         filename = safe_filename(f"{code}_{name}_招股说明书.pdf")
 
@@ -409,7 +552,7 @@ def archive_one(kind, ann, root, idx, mirror=None, force=False, timeout=120):
         filepath, size = res["filepath"], res["size_bytes"]
         status = "ok"
         idx.add({
-            "key": Index.key(kind, code, d),
+            "key": Index.key(kind, code, d, ann["title"]),
             "date": d, "kind": kind, "code": code, "name": name,
             "title": ann["title"], "size_bytes": size,
             "board": detect_board(ann["title"]) or "",
@@ -432,8 +575,14 @@ def daterange(a, b):
         cur += timedelta(days=1)
 
 
-def collect_day(day, streams, year, timeout, max_pages):
-    """检索某一天的候选正本。返回 [(kind, ann), ...]。"""
+def collect_range(since, until, streams, year, timeout, max_pages):
+    """检索 [since, until] 区间内的候选正本。返回 [(kind, ann), ...]。
+
+    一条公告自带的 `date` 就是它的披露日期，所以**一次区间检索能填出多天的
+    日期目录** —— 不必一天发一个请求。这是从「逐日扫描」改过来的原因：
+    逐日扫描每天至少一次请求（哪怕当天什么都没披露），跨 5 年就是 1700+ 次；
+    区间扫描的请求数只取决于命中总数，与区间宽度无关。
+    """
     picked = []
 
     if "q3" in streams:
@@ -441,42 +590,58 @@ def collect_day(day, streams, year, timeout, max_pages):
         #   1) category_sjdbg_szsh（季度报告大类，覆盖绝大多数）
         #   2) 无 category + searchkey 全文检索（历史教训：中国联通/东方证券等
         #      少数公司正本被归到了季度报告 category 之外）
-        anns, capped = scan_day(REPORT_TYPES["q3"]["category"], "", day,
-                                timeout=timeout, max_pages=max_pages)
+        anns, capped = scan_range(REPORT_TYPES["q3"]["category"], "", since, until,
+                                  timeout=timeout, max_pages=max_pages)
         if capped:
-            log(f"  ! {day} 三季报(category)分页撞上限，可能不全")
+            log(f"  ! {since}~{until} 三季报(category)分页撞上限未拆开，可能不全")
         try:
-            extra, capped2 = scan_day("", REPORT_TYPES["q3"]["search_key"], day,
-                                      timeout=timeout, max_pages=max_pages)
+            extra, capped2 = scan_range("", REPORT_TYPES["q3"]["search_key"],
+                                        since, until, timeout=timeout,
+                                        max_pages=max_pages)
         except DownloadError as e:
-            log(f"  ~ {day} 三季报(searchkey)兜底检索失败：{e.message}")
+            log(f"  ~ {since}~{until} 三季报(searchkey)兜底检索失败：{e.message}")
             extra, capped2 = [], False
         if capped2:
-            log(f"  ! {day} 三季报(searchkey)分页撞上限，可能不全")
+            log(f"  ! {since}~{until} 三季报(searchkey)分页撞上限未拆开，可能不全")
         seen = {a["adjunct_url"] for a in anns}
         anns += [a for a in extra if a["adjunct_url"] not in seen]
 
+        # 按 (代码, 披露日) 分组：区间检索会把同一家公司在不同日期的公告混在一起，
+        # 直接按代码分组会把「今天的正式报告」和「昨天的更正稿」混为一批去挑。
         groups = {}
         for a in anns:
-            groups.setdefault(a["code"], []).append(a)
-        for code, lst in groups.items():
+            groups.setdefault((a["code"], a["date"]), []).append(a)
+        for (_code, _d), lst in groups.items():
             tgt = pick_q3(lst, year)
             if tgt:
-                tgt = dict(tgt, year=year)
-                picked.append(("q3", tgt))
+                picked.append(("q3", dict(tgt, year=year)))
 
     if "ipo" in streams:
-        anns, capped = scan_day("", "招股说明书", day,
-                                timeout=timeout, max_pages=max_pages)
+        anns, capped = scan_range("", "招股说明书", since, until,
+                                  timeout=timeout, max_pages=max_pages)
         if capped:
-            log(f"  ! {day} 招股书分页撞上限，可能不全")
+            log(f"  ! {since}~{until} 招股书分页撞上限未拆开，可能不全")
         groups = {}
         for a in anns:
-            groups.setdefault(a["code"], []).append(a)
-        for code, lst in groups.items():
+            groups.setdefault((a["code"], a["date"]), []).append(a)
+        for (_code, _d), lst in groups.items():
             tgt = pick_ipo(lst)
             if tgt:
                 picked.append(("ipo", tgt))
+
+    # 业绩预告 / 业绩快报：走权威 category_yjygjxz_szsh（见文件头注释）。
+    # 该 category 本身就同时含「业绩预告」和「业绩快报」，故一次检索喂两个正则。
+    if "yjyg" in streams or "yjkb" in streams:
+        anns, capped = scan_range(YJYG_CATEGORY, "", since, until,
+                                  timeout=timeout, max_pages=max_pages)
+        if capped:
+            log(f"  ! {since}~{until} 业绩类分页撞上限未拆开，可能不全")
+        if "yjyg" in streams:
+            for a in pick_yjyg(anns, year):
+                picked.append(("yjyg", a))
+        if "yjkb" in streams:
+            for a in pick_yjkb(anns, year):
+                picked.append(("yjkb", a))
 
     return picked
 
@@ -492,8 +657,8 @@ def cmd_run(args):
     until = date.fromisoformat(args.until)
     streams = [s.strip() for s in args.streams.split(",") if s.strip()]
     for s in streams:
-        if s not in ("q3", "ipo"):
-            raise SystemExit(f"未知流：{s}（可选 q3,ipo）")
+        if s not in SUBDIR:
+            raise SystemExit(f"未知流:{s}（可选 {','.join(SUBDIR)}）")
 
     idx = Index(root)
     mirror = ReportMirror(root)
@@ -506,36 +671,35 @@ def cmd_run(args):
     log(f"既有清单 : manifest.csv {len(mirror.rows)} 行（三季报将镜像到 reports/{args.report_year}/q3/）")
 
     todo = []
-    stats = {"days": 0, "cand": 0, "skip_known": 0, "skip_idx": 0}
-    for day in daterange(since, until):
-        ds = day.isoformat()
-        stats["days"] += 1
-        try:
-            picked = collect_day(ds, streams, args.report_year, args.timeout,
-                                 args.max_pages)
-        except DownloadError as e:
-            log(f"  x {ds} 检索失败：{e.message}")
+    stats = {"cand": 0, "skip_known": 0, "skip_idx": 0}
+    try:
+        picked = collect_range(since, until, streams, args.report_year,
+                               args.timeout, args.max_pages)
+    except DownloadError as e:
+        log(f"  x {since}~{until} 检索失败：{e.message}")
+        picked = []
+    stats["cand"] = len(picked)
+    for kind, ann in picked:
+        code = ann["code"]
+        if kind == "q3" and (code, str(args.report_year)) in have_q3:
+            stats["skip_known"] += 1
             continue
-        for kind, ann in picked:
-            stats["cand"] += 1
-            code = ann["code"]
-            if kind == "q3" and (code, str(args.report_year)) in have_q3:
-                stats["skip_known"] += 1
-                continue
-            if kind == "ipo" and ann["date"] <= have_pros.get(code, ""):
-                stats["skip_known"] += 1
-                continue
-            if idx.has(kind, code, ann["date"]):
-                stats["skip_idx"] += 1
-                continue
-            todo.append((kind, ann))
+        if kind == "ipo" and ann["date"] <= have_pros.get(code, ""):
+            stats["skip_known"] += 1
+            continue
+        if idx.has(kind, code, ann["date"], ann["title"]):
+            stats["skip_idx"] += 1
+            continue
+        todo.append((kind, ann))
 
-    log(f"检索完成：{stats['days']} 天 → 候选正本 {stats['cand']} 条；"
+    # 统计覆盖到哪些披露日（区间检索的可见证据）
+    days_hit = len({a["date"] for _k, a in picked})
+    log(f"检索完成：候选正本 {stats['cand']} 条，覆盖 {days_hit} 个披露日；"
         f"跳过（既有清单 {stats['skip_known']} / 已归档 {stats['skip_idx']}）"
         f"→ 待下载 {len(todo)} 条")
 
-    for kind, ann in todo:
-        log(f"  + {ann['date']} {kind:>3} {ann['code']} {ann['name']} | {ann['title'][:56]}")
+    for kind, ann in sorted(todo, key=lambda x: (x[1]["date"], x[0], x[1]["code"])):
+        log(f"  + {ann['date']} {kind:>4} {ann['code']} {ann['name']} | {ann['title'][:56]}")
 
     if args.dry_run:
         log("--dry-run：不下载")
@@ -582,17 +746,22 @@ def cmd_list(args):
     since = date.fromisoformat(args.since)
     until = date.fromisoformat(args.until)
     streams = [s.strip() for s in args.streams.split(",") if s.strip()]
+    for s in streams:
+        if s not in SUBDIR:
+            raise SystemExit(f"未知流:{s}（可选 {','.join(SUBDIR)}）")
     total = 0
-    for day in daterange(since, until):
-        ds = day.isoformat()
-        picked = collect_day(ds, streams, args.report_year, args.timeout, args.max_pages)
-        if not picked:
-            continue
-        print(f"\n=== {ds}  ({len(picked)} 条)")
-        for kind, ann in sorted(picked, key=lambda x: (x[0], x[1]["code"])):
+    picked = collect_range(since, until, streams, args.report_year,
+                           args.timeout, args.max_pages)
+    by_day = {}
+    for kind, ann in picked:
+        by_day.setdefault(ann["date"], []).append((kind, ann))
+    for ds in sorted(by_day):
+        rows = by_day[ds]
+        print(f"\n=== {ds}  ({len(rows)} 条)")
+        for kind, ann in sorted(rows, key=lambda x: (x[0], x[1]["code"])):
             total += 1
-            print(f"  {kind:>3} {ann['code']} {ann['name']} | {ann['title'][:70]}")
-    print(f"\n合计候选 {total} 条")
+            print(f"  {kind:>4} {ann['code']} {ann['name']} | {ann['title'][:70]}")
+    print(f"\n合计候选 {total} 条，覆盖 {len(by_day)} 个披露日")
     return 0
 
 
@@ -706,7 +875,7 @@ def cmd_migrate(args):
 
 def build_parser():
     p = argparse.ArgumentParser(
-        description="按披露日期归档巨潮增量文档（三季报 / IPO 招股书）",
+        description="按披露日期归档巨潮增量文档（三季报 / IPO 招股书 / 业绩预告）",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -715,13 +884,16 @@ def build_parser():
         sp.add_argument("--root", "-o", required=True, help="落盘根目录")
         sp.add_argument("--since", required=True, help="起始披露日 YYYY-MM-DD")
         sp.add_argument("--until", required=True, help="结束披露日 YYYY-MM-DD")
-        sp.add_argument("--streams", default="q3,ipo", help="q3,ipo（默认两者）")
+        sp.add_argument("--streams", default="q3,ipo,yjyg",
+                        help="逗号分隔：q3=三季报 ipo=招股书 yjyg=业绩预告 "
+                             "yjkb=业绩快报（默认 q3,ipo,yjyg）")
         sp.add_argument("--report-year", type=int, default=date.today().year,
                         help="定期报告所属年份（默认今年）")
         sp.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
                         help="单请求超时秒数")
         sp.add_argument("--max-pages", type=int, default=MAX_PAGES_DEFAULT,
-                        help="单日单流翻页上限")
+                        help="单次区间检索的翻页上限（撞上限会自动二分区间递归，"
+                             f"默认 {MAX_PAGES_DEFAULT}）")
         if name == "run":
             sp.add_argument("--workers", type=int, default=6, help="并发下载线程数")
             sp.add_argument("--force", action="store_true",

@@ -6,8 +6,10 @@
     循环调用 fetch_by_date.py，每轮取「最近 N 天」作为窗口重新检索：
 
       * 为什么是滑动窗口而不是「只抓当天」——三季报在披露季里是**回溯补发**的，
-        某天漏跑一轮，只抓当天就永久缺那一天；7 天窗口让漏跑自动自愈，
+        某天漏跑一轮，只抓当天就永久缺那一天；21 天窗口让漏跑自动自愈，
         已下载的内容靠 manifest + 本地文件双重去重，不会重复下载。
+      * 为什么窗口开大不心疼——`fetch_by_date.py` 是**按区间检索**的（见 README），
+        请求数只取决于命中总数 ÷ 30，跟区间开多宽无关。
       * 为什么每轮重新起一个 python 进程 —— 无状态、崩溃自恢复，
         任何一轮失败都不影响下一轮。
 
@@ -19,13 +21,15 @@
     落盘根目录（含 `by_date/`、`reports/`、`manifest.csv` 的那个）。默认 cninfo 数据集。
 
 .PARAMETER IntervalHours
-    两轮之间的间隔小时数。默认 8（即每天 3 轮，成长期与高峰期的当天数据当天落地）。
+    两轮之间的间隔小时数。默认 4（每天 6 轮）。
 
 .PARAMETER CatchUpDays
-    每轮回溯天数，默认 7。
+    每轮回溯天数，默认 21。区间检索很便宜（实测 41 天窗口只要 ~2 秒，因为请求数
+    只取决于命中总数 ÷ 30，与区间宽度无关），所以窗口开大几乎不花代价，却能在
+    守护宕机数周后仍自动补齐漏掉的披露日。
 
 .PARAMETER Streams
-    抓取流，默认 `q3,ipo`。
+    抓取流，默认 `q3,ipo,yjyg`。加 `yjkb` 可一并抓业绩快报。
 
 .PARAMETER ReportYear
     定期报告所属年份，0 表示取当前年份。
@@ -39,9 +43,9 @@
 #>
 param(
     [string]$Root = "C:\Users\iq112\Documents\cninfo",
-    [int]$IntervalHours = 8,
-    [int]$CatchUpDays = 7,
-    [string]$Streams = "q3,ipo",
+    [int]$IntervalHours = 4,
+    [int]$CatchUpDays = 21,
+    [string]$Streams = "q3,ipo,yjyg",
     [int]$ReportYear = 0,
     [string]$Until = "2026-11-05",
     [string]$Python = "python"
@@ -79,8 +83,11 @@ while ($true) {
     }
 
     $round++
+    # 窗口右端取「明天」：巨潮的晚间公告以**次日**作为披露日期（实测 2026-10-09
+    # 晚 21:38 已能查到标注 2026-10-10 的三季报预告）。只查到今天就只能等下一轮
+    # 才拿得到晚间新发的公告，右端放宽一天即可当天落地。
     $winSince = $now.AddDays(-$CatchUpDays).ToString("yyyy-MM-dd")
-    $winUntil = $now.ToString("yyyy-MM-dd")
+    $winUntil = $now.AddDays(1).ToString("yyyy-MM-dd")
     Write-Watch "── 第 $round 轮开始：窗口 $winSince ~ $winUntil"
 
     & $Python $target run --root $Root --since $winSince --until $winUntil `
