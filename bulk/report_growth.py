@@ -394,6 +394,187 @@ NOTES = {
     ),
 }
 
+# code -> 一句话估值判断（同样来自逐只读数后的判断，硬编码以保持可复现）
+# 只写「数字之外」的解读；PE / 市值 / 涨跌幅等一律由 quotes.json 自动渲染。
+VAL_NOTES = {
+    "301716": "**次新股，没有可比的成长股估值锚。** 最新价 **541 元**、"
+              "按招股书 2025 年报折算 **150.6 倍** PE、PB **18.64 倍**，"
+              "市值 405.33 亿对应 2.6908 亿净利 —— 定价里装的是未来三年的 AI 热管理放量。"
+              "招股书没有「前三季」概念，所以本报告的「前瞻 PE」对它不适用，"
+              "150.6 倍仍是**用去年的利润**算的。基本面质地是本次最好的，"
+              "但**当前价格已经把最好的情形定价进去了**，安全边际最薄。",
+    "001246": "港股 TTM 仅 **10.6 倍**、按 2025 年报折算 **9.97 倍**，是本次全部标的"
+              "中最低的（市值 334.18 亿港元 ×0.8536 = 285.26 亿人民币 ÷ 28.6226 亿）。"
+              "但这是**周期股估值**（镍价敏感、净利率 7.1%），不是成长股估值。"
+              "回 A 发行的定价会被 2245.HK 的现价锚定，一级市场折价空间有限；"
+              "年内 -15.4%、近 60 日 +48.0%，说明港股对镍价预期的摆动很大。",
+    "300821": "**静态 PE 是负的**（2025 年报亏损 0.19 亿），TTM 56 倍，前瞻年化 27.7 倍。"
+              "披露日当天（2026-10-09）股价 **涨停 20.01%**，说明市场已对预告做出反应；"
+              "但近 60 个交易日仍 **-43.46%**，年内 +47.34%，波动极大。"
+              "低基数造成的三倍增长并不构成估值支撑。",
+    "300497": "TTM PE 为负（上年同期亏损），前瞻年化 **19.1 倍**。若 2027 年电解液添加剂"
+              "景气度与未冉® 蛋白放量兑现，19 倍不贵；但双主线的兑现节奏都在 2026 年底之后，"
+              "**当前估值买的是 2027 年的故事**。",
+    "300209": "**全榜最贵的故事股。** 年内涨幅 **+532%**，TTM PE 为负、前瞻年化 90.6 倍、"
+              "PB 34 倍，市值 320 亿。利润体量（2.65 亿）与市值之间的差距由算力叙事填补，"
+              "而业务本身是**重资金垫资的硬件贸易 + 租赁**（65.89 亿授信才是关键数字）。"
+              "一旦算力租赁价格或上架率不及预期，估值向下弹性极大。",
+    "300964": "前瞻年化 49.4 倍配 190%~335% 的净利增速，PEG 不高于 0.3 —— 表面便宜。"
+              "但 79 亿市值对应 1.2 亿净利，**倍数高是因为绝对利润太小**，"
+              "任何一个季度的波动都会显著改变分母。年内已涨 86.6%。",
+    "603228": "**成长最好的之一，也是最贵的之一。** 1043 亿市值、TTM 88.2 倍、"
+              "前瞻年化仍 78.2 倍 —— 即使净利同比 +205%~265%，市场给的估值已经把"
+              "「AI 高多层板持续放量」当作既定事实。近 60 日逆势 +42.1%，"
+              "是本次 B 档里**估值透支最明显**的一家。",
+    "688469": "TTM PE 为负（尚未走出亏损），前瞻年化 79.2 倍、PB 5.4 倍。"
+              "扭亏第一年就给 79 倍，定价的是**重资产代工的产能爬坡与折旧摊薄**，"
+              "不是当期利润。这类标的的估值对产能利用率极度敏感。",
+    "600521": "**估值与成长的错配最明显的一家。** 前瞻年化 **18.4 倍**、TTM 41.6 倍、"
+              "PB 2.74，而净利同比 +170%~190%（扣非 +145%~175%）；"
+              "**年内仅涨 3.43%** —— 市场显然还没按新盈利重估。"
+              "唯一要打折的是仲裁赔款等一次性收益。",
+    "600256": "前瞻年化 **12.55 倍**、PB 1.84，是全榜最便宜的之一。"
+              "市场给周期股估值（煤价 + 大修复产驱动的利润修复），这是对的 —— "
+              "**便宜但不宜按成长股逻辑持有**。",
+    "301086": "TTM 116 倍、前瞻年化 71.5 倍、PB 8.9 倍，年内已涨 76.2%。"
+              "液冷板确实是新赛道，但**71 倍的估值假设了液冷业务顺利放量且不被价格战侵蚀**；"
+              "1.85 亿的利润体量撑不起 176 亿市值。",
+    "600176": "年内 **+128.09%**，是榜单里涨幅最大的一家；近 60 日回撤 34.3%。"
+              "前瞻年化 22.0 倍、PB 4.66 —— 对玻纤周期股而言，**估值已经把量价齐升"
+              "计入相当部分**，+100% 的增速若不能延续，22 倍并不便宜。",
+    "001389": "**「高增长 + 估值没跑过头」的代表。** 前瞻年化 **37.1 倍**、TTM 49.4 倍，"
+              "配 +100% 的净利增速，PEG 明显小于 1；年内 +90.8% 但近 60 日 -15.4%，"
+              "属于「涨了但仍未透支」。泰国基地投产是额外的地缘对冲。",
+    "688099": "**本次「成长确认、估值未反映」最典型的一家。** 前瞻年化 **24.6 倍**、"
+              "TTM 42.8 倍、PB 5.29，配 +80.6%~87.7% 的净利增速；"
+              "而**年内只涨 14.57%**、近 60 日 -2.63% —— 股价几乎没动。"
+              "PEG 约 0.3，是 B 档里估值吸引力最强的一家。",
+    "605020": "前瞻年化 **14.5 倍**、TTM 19.5 倍、PB 2.65，配 +62%~83% 的增速，"
+              "年内仅涨 17.2%。**便宜且成长真实**，是「含氟聚合物放量 + 制冷剂配额"
+              "价格中枢上移」两条中期逻辑下估值最舒服的一家。",
+    "000601": "前瞻年化 16.7 倍、PB 1.52，估值便宜；但**便宜的原因是成长逻辑弱**"
+              "（水电靠来水、造纸仅减亏）。这是「低估值 + 弱成长」，不是成长股的低估。",
+    "300054": "年内 +69.4% 后近 60 日回撤 **-33.8%**。TTM 64.6 倍、前瞻年化 53.5 倍，"
+              "PB 10.78 倍。相对 +66% 的利润增速，PEG 约 0.8 —— **不算便宜，但也不算透支**；"
+              "「营收平、利润增」的结构升级若在 Q4 延续，53 倍会被增速消化。",
+    "300389": "前瞻年化 **13.7 倍**、PB 2.61、TTM 16.6 倍，年内还 **-22.2%**。"
+              "全榜估值最低的成长标的之一，但「成长」本身温和（+32%~43%），"
+              "属于低估值 + 中低成长，**赔率好而弹性一般**。",
+    "300373": "前瞻年化 26.9 倍、TTM 31.8 倍、PB 4.53，年内 +23.7%（近 60 日 -38.9%）。"
+              "估值合理，且汽车 / SiC 业务今年均翻倍增长 —— 若这两块占比继续提升，"
+              "**26.9 倍对应的是「新业务尚未成为利润主体」的错位**，这是它的机会所在。",
+    "688103": "**全榜最贵。** 前瞻年化 **163.9 倍**、TTM 98.1 倍，市值 64.9 亿对应"
+              "仅 0.297 亿净利。真空电容器 / 磁控管的想象空间（金刚石散热、大科学装置）"
+              "已经被完全定价，**订单连续性一旦证伪，估值没有支撑**。",
+    "920157": "2026-10-09 **上市首日暴涨 +449%**（发行价 13.75 → 75.55），"
+              "静态/动态/滚动 PE 全部在 77 倍附近，PB 9.2 倍。"
+              "次新股没有历史价格参照，**当前价格是首日情绪价，不具估值参考意义**。",
+    "002107": "**营收负增长却给 34 倍 PE。** TTM 34.11、前瞻年化 34.34（几乎相同，"
+              "因为前三季利润就是滚动口径），PB 6.38。年内 +23.0%、近 60 日 +19.3%。"
+              "利润改善来自费用端而非收入端，**34 倍缺乏收入侧支撑**。",
+    "920202": "上市不久，TTM 23.6 倍、PB 2.35，市值仅 16.3 亿。绝对估值不高，"
+              "但对应的是 +20% 的净利增速 —— **便宜与低成长是同一件事**。",
+    "300505": "前瞻年化 22.5 倍、TTM 12.7 倍似乎便宜，但**净利同比 -40%~-47%**。"
+              "低 PE 对应的是正在下滑的利润，是典型的**价值陷阱形态**。",
+    "002536": "**利润腰斩却给了 169.8 倍前瞻 PE。** TTM 131.7 倍、PB 7.21，市值 240 亿"
+              "对应 1.06 亿净利。这个估值与业绩预告完全脱钩，"
+              "说明市场在按**汽车热管理之外的其他预期**定价 —— 与本次三季报无关，"
+              "报告不对该预期背书。",
+    "688216": "前瞻年化 **143.1 倍**，市值 41 亿对应 0.215 亿净利。"
+              "封测是重资产、低毛利环节，**143 倍只有在利用率持续满产数年才能消化**，"
+              "年内已涨 60.9%。",
+    "301686": "上市不久，TTM 58.0 倍、PB 5.97。对应的是 +26.8% 的净利增速和"
+              "仅 +7.08% 的营收增速 —— **估值高于成长质量**。",
+    "301569": "上市不久，TTM 23.5 倍、PB 2.05。估值本身不高，但 **2025 年净利同比 -12.43%**，"
+              "美国仿制药价格通缩是结构性压力，23.5 倍对应的是下行中的利润。",
+    "920196": "**尚未上市，无行情可比。** 三年净利 CAGR 5.2%，估值讨论没有意义。",
+    "920162": "**尚未上市，无行情可比。** 三年营收 / 净利双双下滑。",
+    "920296": "**尚未上市，无行情可比。** 军工线缆标的上市后大概率享受次新与军工双重溢价，"
+              "但当前无价格可评。",
+    "301660": "上市不久，**PE 全部为负**（TTM -15.7 倍、动态 -16.4 倍），PB 4.52，"
+              "市值 345.7 亿。亏损扩大期给 4.5 倍 PB，定价的是「12 英寸模拟代工达产后的"
+              "盈利拐点」。**在拐点确认前，PB 是唯一的估值锚。**",
+}
+
+# 前瞻 PE 分档（用于自动打标签；口径见 METHOD_NOTE）
+VAL_BUCKETS = [(15.0, "低估"), (25.0, "合理偏低"), (40.0, "合理偏高"),
+               (70.0, "偏贵"), (float("inf"), "很贵")]
+
+
+def load_quotes(root):
+    path = os.path.join(root, "quotes.json")
+    if not os.path.exists(path):
+        return None
+    return json.load(io.open(path, encoding="utf-8"))
+
+
+def forward_pe(row, q):
+    """统一口径的「前瞻 PE」。
+
+    - 业绩预告 / 三季报：市值 ÷ (本次前三季净利 × 4/3)，即 `pe_fwd_year`；
+    - 招股书三年财务：没有「前三季」概念，用市值 ÷ 最近完整年度净利（`pe_last_annual`）。
+    """
+    if not q:
+        return None, None
+    if (row.get("source") or "") == "招股书三年财务":
+        return q.get("pe_last_annual"), "按最近完整年度（招股书 2025 年报）"
+    return q.get("pe_fwd_year"), "按本次前三季净利线性年化（×4/3）"
+
+
+def val_flag(pe_fwd, q):
+    if not q:
+        return "无行情"
+    if pe_fwd is None:
+        return "亏损／无前瞻 PE"
+    for hi, name in VAL_BUCKETS:
+        if pe_fwd < hi:
+            return name
+    return "很贵"
+
+
+def val_line(row, q, pe_fwd, basis, flag):
+    """自动渲染一行「当下股价」。"""
+    if not q:
+        return "- **当下股价**：尚未上市（或长期停牌），无行情数据。"
+    hk = bool(q.get("fx_note"))
+    bits = ["最新价 **%s%s**" % (yi(q.get("price")), " 港元" if hk else ""),
+            "总市值 **%s 亿%s**" % (yi(mv_cny(q)), "（港元折算）" if hk else "")]
+    if q.get("pb") is not None:
+        bits.append("PB **%s**" % yi(q.get("pb")))
+    pes = []
+    if q.get("pe_ttm"):
+        pes.append("TTM %s" % yi(q["pe_ttm"]))
+    if q.get("pe_static"):
+        pes.append("静态 %s" % yi(q["pe_static"]))
+    if q.get("pe_dyn"):
+        pes.append("动态 %s" % yi(q["pe_dyn"]))
+    if pes:
+        bits.append("PE（市场当前看到的口径）" + " / ".join(pes))
+    if pe_fwd is not None:
+        bits.append("**前瞻 PE %s（%s）**" % (yi(pe_fwd), basis))
+        if q.get("pe_ttm"):
+            ratio = q["pe_ttm"] / pe_fwd
+            if ratio >= 1.5:
+                bits.append("TTM÷前瞻 = **%.2f** → 市场尚未按新盈利重估" % ratio)
+            elif ratio >= 1.1:
+                bits.append("TTM÷前瞻 = %.2f → 已部分反映" % ratio)
+            else:
+                bits.append("TTM÷前瞻 = %.2f → 已充分反映（甚至透支）" % ratio)
+    tr = []
+    if q.get("chg_ytd_pct") is not None:
+        tr.append("年初至今 **%+.2f%%**" % q["chg_ytd_pct"])
+    if q.get("chg_60d_pct") is not None:
+        tr.append("近 60 日 **%+.2f%%**" % q["chg_60d_pct"])
+    if tr:
+        bits.append("股价表现：" + "、".join(tr))
+    bits.append("估值分档：**%s**" % flag)
+    out = "- **当下股价**：" + "；".join(bits) + "。"
+    note = VAL_NOTES.get(row["code"])
+    if note:
+        out += "\n- **估值判断**：" + note
+    return out
+
+
 METHOD_NOTE = """
 ## 0. 方法与数据来源
 
@@ -440,6 +621,36 @@ METHOD_NOTE = """
 > ⚠️ **增速的读法**：业绩预告的同比基数若为亏损或极低值（扭亏、低基数），
 > 百分比会失真。本报告用 `low_base` 标记这类行（东财 `PREDICT_TYPE` 为
 > 「扭亏/首亏」，或 |同比| ≥ 1000%），并在评语中显式说明。
+
+**行情与估值口径**：行情来自**腾讯证券公开接口**（`qt.gtimg.cn` 快照 +
+`web.ifzq.gtimg.cn` 前复权日 K），由 `bulk/quotes_growth.py build` 抓取，
+快照时间 **2026-10-09 收盘后**，结果存于 `bulk/_growth/quotes.json`。
+33 只标的中 **30 只有行情**，3 只（920196 南方乳业 / 920162 莫森泰克 /
+920296 文峰光电）经实测确实**尚未上市**，无价格可评。
+
+| 字段 | 含义 |
+|---|---|
+| PE(TTM) | 市值 ÷ 最近 4 个季度净利（行情接口口径） |
+| PE(静态) | 市值 ÷ 最近一个完整年度净利 |
+| **前瞻PE** | 业绩预告/三季报行：市值 ÷ (**本次前三季净利 × 4/3**)；招股书行：市值 ÷ 最近完整年度净利 |
+| PB | 市值 ÷ 净资产 |
+| 年初至今 / 近60日 | 前复权收盘价相对去年最后一个交易日 / 60 个交易日前涨跌幅 |
+
+> **币种**：港股标的（001246 力勤资源，本体 02245.HK 回 A 发行）的行情以**港元**计价，
+> 而财报以**人民币**计价。本报告用新浪财经 `hq.sinajs.cn/list=HKDCNY` 的
+> **2026-10-09 汇率 0.8536** 把市值折算成人民币后再算 PE
+> （不折算会得到 11.68 倍的假 PE，实际 **9.97 倍**）。表中港股市值标注「港元折算」。
+
+> ⚠️ **前瞻 PE 的三个已知偏差**：① **线性年化忽略季节性**（多数制造业 Q4 更好，
+> 因此前瞻 PE 偏保守；但也有公司 Q4 计提较多，会偏乐观）；② 分母用的是
+> **业绩预告区间中值**，不是终值；③ **PE 跨行业不可直接比较** —— 同是 30 倍，
+> 玻纤周期股和 SoC 设计公司的含义完全不同。本报告的「估值分档」只是
+> 分位数意义上的粗标尺（<15 低估 / 15–25 合理偏低 / 25–40 合理偏高 /
+> 40–70 偏贵 / >70 很贵），**不是买卖依据**。
+>
+> **「重估空间」列**用 `PE(TTM) ÷ 前瞻PE` 衡量市场是否已按新盈利定价：
+> ≥1.5× 说明股价还没反映本次业绩改善，<1.1× 说明已经反映甚至透支。
+> 这是本报告回答「**当下的股价是否已经把成长定价进去了**」的主要依据。
 """
 
 
@@ -489,15 +700,79 @@ def yoy_cell(r, field):
     return y if y else "—"
 
 
-def main_tbl(rows, title):
-    out = ["| 档位 | 类型 | 代码 | 名称 | 披露日 | 营收(亿) | 营收同比 | 净利(亿) | 净利同比 | 对账 |",
-           "|---|---|---|---|---|---|---|---|---|---|"]
+def mv_cny(q):
+    """总市值（亿元人民币）。港股行已按 HKD/CNY 换算。"""
+    if not q:
+        return None
+    return q.get("total_mv_cny_yi") if q.get("total_mv_cny_yi") is not None else q.get("total_mv_yi")
+
+
+def mv_cell(q):
+    v = mv_cny(q)
+    if v is None:
+        return "—"
+    return yi(v) + ("（港元折算）" if q.get("fx_note") and "港元折算" in q["fx_note"] else "")
+
+
+def q_of(quotes, code):
+    return ((quotes or {}).get("quotes") or {}).get(code)
+
+
+def main_tbl(rows, title, quotes=None):
+    out = ["| 档位 | 类型 | 代码 | 名称 | 披露日 | 营收(亿) | 营收同比 | 净利(亿) | 净利同比 | 市值(亿) | 前瞻PE | 年初至今 | 对账 |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        out.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+        q = q_of(quotes, r["code"])
+        pf = forward_pe(r, q)[0] if q else None
+        out.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
             r["tier"], r["kind"], r["code"], r["name"], r["date"],
             yi(r["revenue_yi"]), clean_yoy(r["revenue_yoy"]),
             yi(r["profit_yi"]), clean_yoy(r["profit_yoy"]),
+            mv_cell(q) if q else "—",
+            yi(pf) if pf is not None else ("亏损" if q else "未上市"),
+            ("%+.1f%%" % q["chg_ytd_pct"]) if q and q.get("chg_ytd_pct") is not None else "—",
             r["xcheck"] or "—"))
+    return "\n".join(out)
+
+
+VAL_BUCKET_ORDER = ["低估", "合理偏低", "合理偏高", "偏贵", "很贵", "亏损／无前瞻 PE", "无行情"]
+
+
+def val_tbl(rows, quotes):
+    """§3 的全量估值表：按前瞻 PE 升序（无前瞻 PE 的排最后）。"""
+    def key(r):
+        q = q_of(quotes, r["code"])
+        pf = forward_pe(r, q)[0] if q else None
+        return (1, 0.0) if pf is None else (0, pf)
+
+    out = ["| 代码 | 名称 | 档位 | 总市值(亿人民币) | 最新价 | PE(TTM) | PE(静态) | 前瞻PE | 口径 | 估值分档 | PB | 年初至今 | 近60日 | 市场是否已按新盈利定价 |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in sorted(rows, key=key):
+        q = q_of(quotes, r["code"])
+        if not q:
+            out.append("| %s | %s | %s | — | — | — | — | — | — | 无行情 | — | — | — | 尚未上市，无行情 |"
+                       % (r["code"], r["name"], r["tier"].split()[0]))
+            continue
+        pf, basis = forward_pe(r, q)
+        flag = val_flag(pf, q)
+        if q.get("pe_ttm") and pf:
+            ratio = q["pe_ttm"] / pf
+            view = ("尚未按新盈利重估（%.2f×）" % ratio if ratio >= 1.5
+                    else "已部分反映（%.2f×）" % ratio if ratio >= 1.1
+                    else "已充分反映／透支（%.2f×）" % ratio)
+        elif not q.get("pe_ttm"):
+            view = "TTM 为负（亏损），无重估空间可比"
+        else:
+            view = "无前瞻 PE 可比"
+        out.append("| %s | %s | %s | %s | %s | %s | %s | **%s** | %s | **%s** | %s | %s | %s | %s |" % (
+            r["code"], r["name"], r["tier"].split()[0],
+            mv_cell(q), yi(q.get("price")),
+            yi(q.get("pe_ttm")), yi(q.get("pe_static")),
+            yi(pf) if pf is not None else "—", basis or "—", flag,
+            yi(q.get("pb")),
+            ("%+.1f%%" % q["chg_ytd_pct"]) if q.get("chg_ytd_pct") is not None else "—",
+            ("%+.1f%%" % q["chg_60d_pct"]) if q.get("chg_60d_pct") is not None else "—",
+            view))
     return "\n".join(out)
 
 
@@ -513,7 +788,7 @@ def scale_tbl(rows):
     return "\n".join(out)
 
 
-def detail(tier_rows):
+def detail(tier_rows, quotes=None):
     out = []
     for r in tier_rows:
         code = r["code"]
@@ -553,23 +828,51 @@ def detail(tier_rows):
             out.append("- **主要风险**：" + note[2])
         else:
             out.append("- （未附加评语）")
+        q = q_of(quotes, code)
+        pf, basis = forward_pe(r, q)
+        out.append(val_line(r, q, pf, basis, val_flag(pf, q)))
         out.append("")
     return "\n".join(out)
 
 
 def build(root, outdir):
     rows, ext = load(root)
+    quotes = load_quotes(root)
     by = {t: [r for r in rows if r["tier"] == t] for t in TIER_ORDER}
     A, B, C = by["A 超级成长"], by["B 高规模+高增速"], by["C 高增速"]
     top = A + B + C
 
+    def pf_of(r):
+        return forward_pe(r, q_of(quotes, r["code"]))[0]
+
+    def ratio_of(r):
+        q = q_of(quotes, r["code"])
+        pf = pf_of(r)
+        if not q or not q.get("pe_ttm") or not pf:
+            return None
+        return q["pe_ttm"] / pf
+
+    grown = [r for r in rows if r["tier"].split()[0] in ("A", "B", "C")]
+    cheap_growth = sorted([r for r in grown if pf_of(r) is not None and pf_of(r) <= 30.0],
+                          key=pf_of)
+    rich = sorted([r for r in rows if pf_of(r) is not None and pf_of(r) >= 70.0],
+                  key=lambda r: -pf_of(r))
+    not_repriced = sorted([r for r in rows if (ratio_of(r) or 0) >= 1.5],
+                          key=lambda r: -ratio_of(r))
+    repriced = sorted([r for r in rows if ratio_of(r) is not None and ratio_of(r) < 1.1],
+                      key=ratio_of)
+    listed = [r for r in rows if q_of(quotes, r["code"])]
+    unlisted = [r for r in rows if not q_of(quotes, r["code"])]
+
     L = []
-    L.append("# 2026 三季度 · 高利润高营收与成长股筛选报告")
+    L.append("# 2026 三季度 · 高利润高营收与成长股筛选报告（含当下估值）")
     L.append("")
-    L.append("> 数据截止 **2026-10-09**（本轮巨潮公告披露批次），"
+    L.append("> 财务数据截止 **2026-10-09**（本轮巨潮公告披露批次），"
              "覆盖 `manifest_by_date.csv` 中披露日期 **≥ 2026-09-01** 的全部 33 份公告。")
+    L.append("> 行情数据为 **2026-10-09 收盘**快照（腾讯证券），"
+             "其中 30 只有行情、3 只尚未上市。")
     L.append("> 生成脚本：`bulk/report_growth.py`；榜单数据：`rank_growth.csv`；"
-             "抽取结果：`extract.json`。")
+             "抽取结果：`extract.json`；行情：`quotes.json`。")
     L.append("")
     L.append(METHOD_NOTE)
     L.append("")
@@ -591,7 +894,9 @@ def build(root, outdir):
             names += " 等 %d 家" % len(g)
         L.append("| %s | %d | %s |" % (t, len(g), names))
     L.append("")
-    L.append("**如果只看一家**：`301716 鸿富诚` —— AI 芯片热管理材料，三年营收 CAGR 64.7%、"
+    L.append("### 1.1 财务面：如果只看一家")
+    L.append("")
+    L.append("`301716 鸿富诚` —— AI 芯片热管理材料，三年营收 CAGR 64.7%、"
              "净利 CAGR 177.4%，综合毛利率从 46.41% 升到 65.56%，是本次唯一的"
              "「量、价、结构」三重驱动的超级成长标的。")
     L.append("")
@@ -599,17 +904,110 @@ def build(root, outdir):
              "的同比是把亏损/极低值当基数，增速数字不可直接比较；"
              "剔除后成长确定性最高的是 **景旺电子、广合科技、晶晨股份、鼎龙股份、扬杰科技**。")
     L.append("")
+    L.append("### 1.2 股价面：成长有没有被价格提前定价")
+    L.append("")
+    L.append("这是本次新增的维度。把「本次披露的盈利」除以当前市值，得到**前瞻 PE**，"
+             "再与市场当前用的 PE(TTM) 相比，就能看出**股价是否已经跑在业绩前面**。")
+    L.append("")
+    L.append("**① 成长快、估值还没跟上（前瞻 PE ≤ 30 倍，且属 A/B/C 档）—— 共 %d 家：**" % len(cheap_growth))
+    L.append("")
+    L.append("| 代码 | 名称 | 档位 | 净利(亿) | 净利同比 | 总市值(亿) | PE(TTM) | **前瞻PE** | 年初至今 |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
+    for r in cheap_growth:
+        q = q_of(quotes, r["code"])
+        L.append("| %s | %s | %s | %s | %s | %s | %s | **%s** | %s |" % (
+            r["code"], r["name"], r["tier"].split()[0], yi(r["profit_yi"]),
+            clean_yoy(r["profit_yoy"]), mv_cell(q), yi(q.get("pe_ttm")),
+            yi(pf_of(r)),
+            ("%+.1f%%" % q["chg_ytd_pct"]) if q.get("chg_ytd_pct") is not None else "—"))
+    L.append("")
+    if not_repriced:
+        L.append("**② 市场明显还没按新盈利重估（PE(TTM) ÷ 前瞻PE ≥ 1.5×）—— 共 %d 家：**" % len(not_repriced))
+        L.append("")
+        L.append("| 代码 | 名称 | 档位 | PE(TTM) | 前瞻PE | 倍数 | 年初至今 | 近60日 |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        for r in not_repriced:
+            q = q_of(quotes, r["code"])
+            L.append("| %s | %s | %s | %s | %s | **%.2f×** | %s | %s |" % (
+                r["code"], r["name"], r["tier"].split()[0], yi(q.get("pe_ttm")),
+                yi(pf_of(r)), ratio_of(r),
+                ("%+.1f%%" % q["chg_ytd_pct"]) if q.get("chg_ytd_pct") is not None else "—",
+                ("%+.1f%%" % q["chg_60d_pct"]) if q.get("chg_60d_pct") is not None else "—"))
+        L.append("")
+    if rich:
+        L.append("**③ 极速增长，但价格已跑在前面（前瞻 PE ≥ 70 倍）—— 共 %d 家：**" % len(rich))
+        L.append("")
+        L.append("| 代码 | 名称 | 档位 | 净利(亿) | 净利同比 | 总市值(亿) | 前瞻PE | 年初至今 |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        for r in rich:
+            q = q_of(quotes, r["code"])
+            L.append("| %s | %s | %s | %s | %s | %s | **%s** | %s |" % (
+                r["code"], r["name"], r["tier"].split()[0], yi(r["profit_yi"]),
+                clean_yoy(r["profit_yoy"]), mv_cell(q), yi(pf_of(r)),
+                ("%+.1f%%" % q["chg_ytd_pct"]) if q.get("chg_ytd_pct") is not None else "—"))
+        L.append("")
+    L.append("**④ 纯粹的「贵 + 弱」**：`002536 飞龙股份` 净利同比 **-59%~-67%**，"
+             "却仍有 131.7 倍 TTM PE 和 169.8 倍前瞻 PE —— 这个价格与本次三季报无关，"
+             "定价的是财报之外的其他预期。")
+    L.append("")
+    L.append("> **一句话结论**：本次榜单里**成长与估值最匹配**的是 `688099 晶晨股份`"
+             "（前瞻 24.6 倍 / +80.6%~87.7% 增速 / 年内仅涨 14.6%）、"
+             "`600521 华海药业`（前瞻 18.4 倍 / +170%~190% / 年内仅涨 3.4%）、"
+             "`605020 永和股份`（前瞻 14.5 倍 / +62%~83%）、"
+             "`001389 广合科技`（前瞻 37.1 倍 / +100% / 近 60 日回撤 15.4%）；"
+             "**最需要警惕价格风险**的是 `300209 行云科技`（年内 +532%、前瞻 90.6 倍、PB 34 倍）、"
+             "`603228 景旺电子`（前瞻 78.2 倍）、`688103 国力电子`（前瞻 163.9 倍）、"
+             "`301716 鸿富诚`（基本面最好，但次新溢价把三年成长都定价了）。")
+    L.append("")
 
-    L.append("## 2. 全量榜单")
+    L.append("## 2. 全量榜单（财务 + 估值）")
     L.append("")
     L.append(main_tbl(sorted(rows, key=lambda r: (TIER_ORDER.index(r["tier"]),
-                                                  -(num(r["profit_yi"]) or 0))), ""))
+                                                  -(num(r["profit_yi"]) or 0))), "", quotes))
     L.append("")
-    L.append("> 表格中「对账」列为与东方财富数据中心独立比对的结果；"
+    L.append("> 「前瞻PE」对业绩预告/三季报行 = 市值 ÷ (前三季净利 × 4/3)，"
+             "对招股书行 = 市值 ÷ 最近完整年度净利；显示「亏损」表示 TTM 净利为负。")
+    L.append("> 「对账」列为与东方财富数据中心独立比对的结果；"
              "「东财无值」表示东财未收录该条自愿性披露预告，不代表数据有误。")
     L.append("")
 
-    L.append("# 3. 逐只点评")
+    L.append("## 3. 当下股价与估值")
+    L.append("")
+    L.append("### 3.1 全量估值表（按前瞻 PE 升序）")
+    L.append("")
+    L.append(val_tbl(rows, quotes))
+    L.append("")
+    L.append("### 3.2 怎么读这张表")
+    L.append("")
+    L.append("- **前瞻 PE** 是「假设本次披露的盈利水平能延续一年」的估值。"
+             "它比 PE(TTM) 更贴近最新事实，比 PE(静态) 更少滞后。")
+    L.append("- **PE(TTM) ÷ 前瞻PE** 才是真正的信号：这个倍数越大，说明市场目前的定价"
+             "还停留在此前的盈利能力上，**股价没有跟上业绩**；越接近 1，说明市场已经把"
+             "改善定价完毕。")
+    L.append("- **但倍数大不等于便宜**：一个亏损转微利、或利润从 100 万变 1 亿的公司，"
+             "前瞻 PE 的倍数会非常夸张，而绝对估值可能依然很高。**必须与绝对前瞻 PE "
+             "和利润体量一起看。**")
+    L.append("- **年内涨跌幅是情绪证据**：如果业绩大幅改善而股价年内不动（如晶晨股份 +14.6%、"
+             "华海药业 +3.4%），说明市场在等待确认（等正式三季报、等 Q4 指引）；"
+             "如果股价已经翻倍、且前瞻 PE 仍在 70 倍以上（如行云科技、景旺电子），"
+             "说明**成长已经被定价，后续需要的是兑现，而不是预期**。")
+    L.append("- **倍数接近 1 也不等于贵**：力勤资源 TTM 10.56 ÷ 前瞻 9.97 = 1.06×，"
+             "意思是**市场早就按这个盈利水平给它定价了**（它已在港股上市多年），"
+             "「没有重估空间」和「估值高」是两件完全不同的事。")
+    L.append("- **涨幅大也不等于贵，要看涨的是业绩还是估值**：`600176 中国巨石` 年内 **+128.1%**，"
+             "但净利同比 +100%~110%，PE 几乎没有扩张（TTM 34.07 → 前瞻 22.0），"
+             "属于**业绩推动**的上涨；`300209 行云科技` 年内 **+532.3%** 而前瞻 PE 仍 90.6 倍，"
+             "属于**估值推动**的上涨。这个区别比涨幅本身重要得多。")
+    L.append("- **周期股要单独看**：广汇能源、中国巨石、东岳硅材、川金诺的利润波动由价格驱动，"
+             "低前瞻 PE 反映的是「周期高位」，一旦价格回落，分母会立刻缩小。"
+             "这类标的的低估值**不是安全边际**。")
+    if unlisted:
+        L.append("- **无行情的 %d 家**（%s）尚未上市，估值维度不适用；"
+                 "它们上市后的定价受发行价与市场情绪主导，与本表无关。"
+                 % (len(unlisted), "、".join(r["name"] for r in unlisted)))
+    L.append("")
+
+    L.append("# 4. 逐只点评")
     L.append("")
     for t in TIER_ORDER:
         if not by[t]:
@@ -628,16 +1026,16 @@ def build(root, outdir):
         elif t == "D 仅规模":
             L.append("这批公司**规模达标但成长性不足**，列出以说明为什么没入选。")
             L.append("")
-        L.append(detail(by[t]))
+        L.append(detail(by[t], quotes))
         L.append("")
 
-    L.append("## 4. 规模 vs 成长 明细")
+    L.append("## 5. 规模 vs 成长 明细")
     L.append("")
     L.append(scale_tbl(sorted(rows, key=lambda r: (TIER_ORDER.index(r["tier"]),
                                                    -(num(r["profit_yi"]) or 0)))))
     L.append("")
 
-    L.append("""## 5. 风险提示与局限
+    L.append("""## 6. 风险提示与局限
 
 1. **业绩预告不是终值**。22 份业绩预告中的金额是公司初步测算的区间，正式三季报可能修正；
    本报告括号内均为「预告区间」。
@@ -646,17 +1044,33 @@ def build(root, outdir):
    报告中已在对应条目打上「⚠️ 低基数/扭亏」标记并在评语中说明。
 3. **口径差异**。部分公司披露「净利润」（含少数股东损益），部分披露「归属于母公司
    所有者的净利润」，两者不可混用排序；详见各条目标注。
-4. **IPO 三年财务的独立验证有限**。10 家 IPO 中只有力勤资源（001246）已上市，
-   可用东财年报库交叉验证（结果四位小数完全一致）；其余 9 家尚未上市、
-   不在公开财务数据库中，其数据来自招股书原文句子（已逐句回溯到原文），
-   但**没有第二个独立数据源可对账**。
-5. **本报告是筛选与定性判断，不构成投资建议**。档位基于财务数字与公告披露的
-   成长动因，未做估值、未做尽调、未核实质押/担保/诉讼等事项。
-6. **样本极小**。33 份公告只是 2026 三季报披露季的开端（法定截止日为 10 月底），
+4. **IPO 三年财务的独立验证有限**。10 家 IPO 标的里 **7 家已有行情**
+   （001246 力勤资源 / 301716 鸿富诚 / 920157 宇特光电 / 920202 安达股份 /
+   301686 中塑股份 / 301569 联亚药业 / 301660 粤芯半导体），
+   但**只有力勤资源有第二个独立的财务数据源**（东财年报库，结果四位小数完全一致）——
+   其余 6 家刚上市，招股书报告期（2023–2025）尚未进入公开财务数据库。
+   它们的数据来自招股书原文句子（已逐句回溯到原文），**没有独立对账**。
+   另有 3 家（920196 南方乳业 / 920162 莫森泰克 / 920296 文峰光电）尚未上市。
+5. **估值维度的三个硬伤**：① **前瞻 PE 用前三季利润线性年化（×4/3），忽略季节性**，
+   对 Q4 是旺季的公司偏保守、对 Q4 集中计提的公司偏乐观；
+   ② **PE 跨行业不可比** —— 制造业、周期股、SoC 设计、亏损中的重资产代工
+   不能放在同一把尺子上，本报告的「估值分档」只是粗标尺；
+   ③ **行情是 2026-10-09 收盘快照**，其后任何一天的价格变动都会改变结论，
+   而行情来自第三方公开接口，未做独立校验（仅有 PE(静态) 与东财年报库的反推校验）。
+6. **股价下跌风险未被量化**。本报告只回答了「成长是否已被定价」，
+   **没有**回答「价格中包含了多少乐观假设、能承受多大的预期落空」。
+   对年内涨幅巨大（行云科技 +532%、中国巨石 +128%）或前瞻 PE 极高
+   （国力电子 163.9、飞龙股份 169.8、气派科技 143.1、鸿富瀚 71.5、
+   景旺电子 78.2、芯联集成 79.2）的标的，**估值本身就是一个独立的、
+   与业绩无关的风险来源**。
+7. **本报告是筛选与定性判断，不构成投资建议**。档位基于财务数字与公告披露的
+   成长动因；估值基于快照行情与线性外推。均未做尽调，未核实质押/担保/诉讼、
+   未考虑解禁与减持、未做行业景气度验证。**任何买卖决策请自行复核。**
+8. **样本极小**。33 份公告只是 2026 三季报披露季的开端（法定截止日为 10 月底），
    随着更多公司披露，榜单会显著变化 —— 建议在披露季结束后重跑：
    `python bulk/fetch_by_date.py run --streams q3,ipo,yjyg,yjkb` 后
    `python bulk/screen_growth.py extract` + `python bulk/rank_growth.py build`
-   + `python bulk/report_growth.py build`。
+   + `python bulk/quotes_growth.py build` + `python bulk/report_growth.py build`。
 """)
 
     text = "\n".join(L)
@@ -664,12 +1078,41 @@ def build(root, outdir):
     md = os.path.join(outdir, "成长股筛选报告_2026Q3.md")
     with io.open(md, "w", encoding="utf-8") as f:
         f.write(text)
-    # CSV：直接复制 rank_growth.csv，保持 UTF-8-SIG 方便 Excel 打开
+
+    # CSV：rank_growth.csv 的全部列 + 行情/估值列，UTF-8-SIG 方便 Excel 打开
+    src_rows = list(csv.DictReader(io.open(os.path.join(root, "rank_growth.csv"),
+                                           encoding="utf-8-sig")))
+    extra = ["total_mv_yi", "total_mv_cny_yi", "mv_currency_note", "price",
+             "pe_dyn", "pe_static", "pe_ttm", "pb",
+             "profit_static_yi", "pe_fwd_3q", "pe_fwd_year", "pe_last_annual",
+             "pe_forward", "pe_forward_basis", "val_flag",
+             "chg_ytd_pct", "chg_60d_pct", "pe_ttm_over_fwd", "quote_note"]
+    base = list(src_rows[0].keys()) if src_rows else ["code"]
     dst = os.path.join(outdir, "榜单_2026Q3.csv")
-    with io.open(os.path.join(root, "rank_growth.csv"), "rb") as s, io.open(dst, "wb") as d:
-        d.write(s.read())
+    with io.open(dst, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(base + extra)
+        for r in src_rows:
+            q = q_of(quotes, r["code"])
+            pf, basis = forward_pe(r, q)
+            ratio = (q["pe_ttm"] / pf) if (q and q.get("pe_ttm") and pf) else None
+            w.writerow([r.get(k, "") for k in base] + [
+                (q or {}).get("total_mv_yi", ""), (q or {}).get("total_mv_cny_yi", ""),
+                "港元折算为人民币" if (q or {}).get("fx_note") else "",
+                (q or {}).get("price", ""),
+                (q or {}).get("pe_dyn", ""), (q or {}).get("pe_static", ""),
+                (q or {}).get("pe_ttm", ""), (q or {}).get("pb", ""),
+                (q or {}).get("profit_static_yi", ""),
+                (q or {}).get("pe_fwd_3q", ""), (q or {}).get("pe_fwd_year", ""),
+                (q or {}).get("pe_last_annual", ""),
+                "" if pf is None else round(pf, 4), basis or "",
+                val_flag(pf, q),
+                (q or {}).get("chg_ytd_pct", ""), (q or {}).get("chg_60d_pct", ""),
+                "" if ratio is None else round(ratio, 4),
+                "" if q else "尚未上市，无行情",
+            ])
     print("报告 -> %s (%d 字)" % (md, len(text)))
-    print("榜单 -> %s" % dst)
+    print("榜单 -> %s (%d 行 × %d 列)" % (dst, len(src_rows), len(base) + len(extra)))
     return md, dst
 
 

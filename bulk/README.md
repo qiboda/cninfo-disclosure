@@ -226,7 +226,7 @@ category 取回的结果同时喂给两个正则，统计「两个都没命中�
 
 ## 成长性筛选（财报/预告 → 定性判断）
 
-把「本轮下载的 PDF」变成一张带评语的榜单。链路四步，可独立重跑：
+把「本轮下载的 PDF」变成一张带评语的榜单。链路五步，可独立重跑：
 
 ```bash
 # ① 抽数：PyMuPDF 解析 PDF → 金额/同比/变动原因，文本缓存到 _growth/text/
@@ -240,9 +240,54 @@ python xcheck_growth.py                     # 差异 0/22 → _growth/em_yjyg.js
 python rank_growth.py build                 # → _growth/rank_growth.csv|json
 python rank_growth.py print
 
-# ④ 渲染：榜单 + 逐只定性评语 → Markdown 报告
+# ④ 行情：腾讯快照 + 前复权日 K → 市值/PE/PB/涨跌幅/前瞻 PE
+python quotes_growth.py build               # → _growth/quotes.json
+python quotes_growth.py build --no-trend    # 只要快照、不拉日 K（快得多）
+python quotes_growth.py view                # 按前瞻 PE 打印全表
+python quotes_growth.py recompute           # 不联网，只用已有 quotes.json 重算估值字段
+
+# ⑤ 渲染：榜单 + 逐只定性评语 + 估值列 → Markdown 报告 + 49 列 CSV
 python report_growth.py build               # → _growth/成长股筛选报告_2026Q3.md
 ```
+
+**行情为什么不走东方财富**：`push2.eastmoney.com` 的 `/api/qt/ulist.np/get` 与
+`/api/qt/stock/get` 在连续请求后**一律** `RemoteDisconnected`，间隔 5 秒重试 8 次、
+等 1 分钟、换 `push2delay.` / `82.push2.`、去掉 `ut` 参数、换 Chrome UA 全都没恢复
+——**IP 级限流**。东财**数据中心**端点（`datacenter-web.eastmoney.com`）不受影响，
+所以 `xcheck_growth.py` 照旧可用，只有行情端点被弃用。改用腾讯：
+
+- 快照 `https://qt.gtimg.cn/q=sz300821,sh600176,bj920157,hk02245`，header 只需
+  `User-Agent` + `Referer: https://gu.qq.com/`，响应是 **GBK**，一次可批量多只。
+  字段以 `~` 分隔、0-based：`3 当前价 / 4 昨收 / 31 涨跌额 / 32 涨跌幅% /
+  38 换手率% / 39 PE(TTM) / 44 流通市值(亿) / 45 总市值(亿) / 46 PB /
+  52 PE(动) / 53 PE(静) / 72 流通股本 / 73 总股本`（共 88 字段）。
+- 日 K `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=<sym>,day,<起>,<止>,<条数>,qfq`
+  → `data.<sym>.qfqday`，**下标 2 = 收盘价**。
+- 前缀 `sz` 深/创、`sh` 沪/科、`bj` 北交所、`hk` 港股。
+
+**两条必踩的坑（都已在代码里修掉，别退回去）**：
+1. **北交所不能靠首字符判断市场**。`920157` 以 `9` 开头，若先把 `9` 映射成沪市就会得到
+   `sh920157`，服务端回 `v_pv_none_match="1"`，**5 只北交所票全被判「无行情」**。
+   正确顺序：`("4","8","920")` → `bj` **先判**，沪市收窄为 `("60","68","69","900")`。
+2. **新股简称比对不能取前 3 字**。清单写「宇特光电」、行情回「N宇特」（去 `N` 只剩 2 字），
+   取前 3 字比对会把它剔除。用「一个是另一个的前缀，或前 2 字相同」。
+   `N/C/U/*` 前缀和空格先剥掉再比。
+
+**汇率**：港股行情按**港元**计价、财报按**人民币**，不折算会得到假 PE。
+腾讯**没有**汇率接口（`q=hkHKDCNY` / `usdHKDCNY` / `HKDCNY` / `s_hkHKDCNY` /
+`hkUSDCNY` **全部返回 `v_pv_none_match="1"`**）。改用新浪财经
+`https://hq.sinajs.cn/list=HKDCNY`，header 需 `Referer: https://finance.sina.com.cn/`，
+响应 **GBK**，正文形如 `var hq_str_HKDCNY="22:55:55,0.8536,...,港元人民币,2026-10-09";`。
+`fetch_fx()` 取不到时返回 `rate=None` + `error` —— **调用方必须显式降级，不得默认 1.0**。
+
+**前瞻 PE 的口径分流（这是第三个坑）**：`quotes_growth.py` 的 `prog_3q_yi` 不能一律
+去 `profit_note` 里取前两个数求平均。招股书行的 `profit_note` 是**三个完整年度**
+（`0.3497 / 0.7147 / 2.691`），照取会让 301716 鸿富诚算出 **761.61 倍**。
+必须按 `source` 分流：`招股书三年财务` → 本就没有「前三季」概念，改用
+`last_annual_yi(row)` + `pe_last_annual`；`定期报告` → 直接用 `profit_yi`
+（`profit_note` 可能是「扣非0.9065亿」这种另一口径的注）；`业绩预告` → 取区间中值。
+另外 **PE 的 0 或负值一律置 `None`** —— 港股力勤资源 `pe_dyn`/`pe_static` 返回 0.0，
+上年亏损的公司 `pe_static` 为负，留 0 会被读成「PE = 0 倍」。
 
 **档位**（阈值集中在 `rank_growth.py` 的 `THRESHOLDS`）：`A 超级成长`（IPO/财报三年
 CAGR 营收≥25% 且净利≥30%，且净利≥1亿）、`B 高规模+高增速`、`C 高增速`（规模不足）、
@@ -254,12 +299,23 @@ CAGR 营收≥25% 且净利≥30%，且净利≥1亿）、`B 高规模+高增速
 `92,654,514.94` 亦完全吻合。22 份业绩预告可比对 19 份，**差异 0 例**；其余 3 份
 （688103 / 603228 / 688216）是自愿性披露，东财未收录。
 
-**评语为什么硬编码在 `report_growth.py` 的 `NOTES` 字典里**：这些判断来自逐份读原文
-（`_growth/text/*.txt`），没有可自动化的口径；写死在脚本里才能让报告可重生成、
-每次改动都在 diff 里可审计。**改评语就改那个字典，别手改生成的 `.md`。**
+**评语为什么硬编码在 `report_growth.py` 的 `NOTES` / `VAL_NOTES` 字典里**：这些判断来自
+逐份读原文（`_growth/text/*.txt`），没有可自动化的口径；写死在脚本里才能让报告可重生成、
+每次改动都在 diff 里可审计。**改评语就改那两个字典，别手改生成的 `.md`。**
+两个字典分工：`NOTES` 写财务面的成长逻辑/判定/风险，`VAL_NOTES` 只写**估值数字之外的解读**
+（PE、市值、涨跌幅一律由 `quotes.json` 自动渲染，别手抄进评语里）。
+
+**报告里的三个「前瞻 PE」**：`pe_fwd_3q` = 市值 ÷ 前三季净利中值；
+`pe_fwd_year` = 市值 ÷ (前三季净利 × 4/3)（报告实际用的是这个）；
+`pe_last_annual` = 市值 ÷ 最近完整年度净利（招股书行专用）。
+已知偏差写在报告的 §0 方法里：**线性年化忽略季节性**、**分母是预告区间中值**、
+**PE 跨行业不可比**。报告 §3.2 还有两条容易被误读的说明：「倍数接近 1 也不等于贵」
+（力勤资源 TTM 10.56 ÷ 前瞻 9.97 = 1.06×，是「市场早就定价了」而非「便宜」）、
+「涨幅大也不等于贵，要看涨的是业绩还是估值」。
 
 `report_growth.py` 会把报告与榜单同时写进 `--out` 目录；交付副本放在
-`C:\Users\iq112\Documents\cninfo\analysis\2026Q3-成长股筛选\`。
+`C:\Users\iq112\Documents\cninfo\analysis\2026Q3-成长股筛选\`，
+CSV 为 **33 行 × 49 列**（`rank_growth.csv` 全部列 + 19 个行情/估值列）。
 
 ## 一次性探针（保留作为排查过程存档）
 
@@ -275,6 +331,10 @@ CAGR 营收≥25% 且净利≥30%，且净利≥1亿）、`B 高规模+高增速
 `probe_yjyg_gap.py`（**量化两个正则的漏口，实测 0**）、
 `probe_fin.py` / `probe_fin2.py`（验证东财 `RPT_PUBLIC_OP_NEWPREDICT` /
 `RPT_LICO_FN_CPD` 两个端点的取数姿势，是 `xcheck_growth.py` 的前身）。
+行情层的三个探针：`probe_quote.py`（东财行情端点，**已证实会被 IP 限流**）、
+`probe_quote_tencent.py`（腾讯快照字段下标 + 用东财年报库反推 PE(静) 逐只验证）、
+`probe_kline_tencent.py`（三个日 K 端点的可用性）、
+`probe_bj_prefix.py`（北交所符号前缀 `bj920xxx`，证明 `sh920xxx` / `sz920xxx` 无效）。
 
 成长性筛选的调试脚本（抽取层排错过程的存档，全部只读）：
 `_dbg9.py`（把 10 家 IPO 的每个数字回溯到招股书原文句子）、
@@ -296,6 +356,9 @@ category 码**。以后新增数据流时先 grep 它，别再猜拼法。
 4. **`searchkey` 与 `category` 同时为空时接口退化** —— 返回「最新 30 条」且 `hasMore=False`，导致招股书（无 category）永远检索不到
 5. **年报正本可能不在 `category_ndbg_szsh` 里** —— 中国联通/东方证券/四川成渝等公司带 category 查只返回「摘要」，须去掉 category 改用 `searchkey` 兜底
 6. **标题变体极多** —— 「年度报告」/「年报」（中国石油、锦江酒店，后者标题连年份都没有）、「第三季度报告」/「三季度报告」、「第一季度报告」/「一季度报告」/「季度报告」/「季报」/「报」（创力集团、顾家家居）。单一关键词会整批漏档，故 `reports.py` 改用 `title_patterns` 多模式匹配
+7. **`bulk_cninfo.py` 用「失败」与「确实没有」共用同一条路径** —— 检索抛异常被吞掉后照样打「候选 0 条」、退出码 0。已在 `fetch_by_date.py` 里加三层防御（见上），`bulk_cninfo.py` 尚未改造
+8. **东方财富行情端点会 IP 级限流** —— `push2.eastmoney.com` 连续请求后一律 `RemoteDisconnected`，且不会自己恢复。行情改走腾讯，东财只留数据中心端点
+9. **`DownloadError` 的属性叫 `status_code` 不叫 `code`** —— `getattr(e, "code", None)` 永远得 `None`，`in _TRANSIENT_HTTP` 静默变 `False`，等于防御代码自己失效。取属性时两个名字都要试
 
 第 5、6 项是首轮跑完后通过 `diag3.py` 归因才发现的：先区分「退市空壳」与「在市公司」，再逐家核对原始公告，最终回收 282 份漏档。
 
