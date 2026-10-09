@@ -23,10 +23,81 @@
 | `retry_empty.py` | 剔除 `status=empty` 记录使其重跑（修正筛选规则后回收漏档用） |
 | `reset_type.py` | 剔除指定类型记录使其重跑 |
 
+## 按披露日期归档（增量层）
+
+| 文件 | 用途 |
+|---|---|
+| `fetch_by_date.py` | **按日期增量抓取**。把最新一批三季报 / IPO 招股书落到 `{root}/by_date/{YYYY-MM-DD}/财报|IPO/`，目录名即披露日期。子命令 `run`（下载）/ `list`（只列出）/ `mirror`（补镜像）/ `migrate`（旧目录搬迁） |
+| `watch_season.ps1` | **报告季值守守护**。按固定间隔循环调用 `run`，每轮取「最近 N 天」滑动窗口，漏跑自愈（见下） |
+| `check_manifest.py` | 快速核对 `manifest.csv`：行数、排序、按类型×年份分布、指向文件是否存在。搬镜像 / 搬迁目录后跑一次 |
+
+与 `bulk_cninfo.py` 的分工：后者是**存量全量**（5,927 只股票 × 类型 × 年份，
+落 `reports/{年}/{类型}/`）；前者是**增量按日**（全市场 + `seDate` 单日检索，
+落 `by_date/{披露日期}/`），用于跟踪「正在披露中」的报告季。
+
+**两份落盘同时进行**：三季报除落到日期目录外，还会**硬链接**一份到既有结构
+`reports/{年}/q3/` 并追加进 `manifest.csv`（排序口径与 `bulk_cninfo.write_manifest`
+一致），使原数据集口径保持完整。硬链接在同一卷上零额外占用；跨卷自动退回复制。
+
+为什么按**单日**检索而不是一个大区间：巨潮 `pageSize` 上限 30，整个三季报季
+约 5,400 份会撞分页上限；单日量级最大约 1,700 条，可控，且单日检索天然带出
+披露日期，直接映射目录名。重复运行只补新日期（既有 `manifest.csv` + 本地文件
+双重去重），因此可以每天跑一次。
+
+```bash
+python fetch_by_date.py run  --root "C:\Users\iq112\Documents\cninfo" \
+    --since 2026-09-01 --until 2026-10-10 --streams q3,ipo --report-year 2026
+python fetch_by_date.py list --root "C:\Users\iq112\Documents\cninfo" \
+    --since 2025-10-31 --until 2025-10-31 --streams q3 --report-year 2025
+python fetch_by_date.py mirror  --root "C:\Users\iq112\Documents\cninfo"   # 补镜像
+python fetch_by_date.py migrate --root "C:\Users\iq112\Documents\cninfo"   # 旧布局搬迁
+```
+
+落盘索引：`{root}/_state/by_date.jsonl`（追加）+ `{root}/manifest_by_date.csv`（全量重写）。
+日志：`{root}/_state/fetch_by_date-<时间戳>.log` 与 `{root}/_state/watch_season-<日期>.log`（均 UTF-8）。
+
+### 报告季值守：什么节奏、为什么滑动窗口
+
+```powershell
+pwsh -File watch_season.ps1                    # 默认 8 小时一轮、回看 7 天、跑到 2026-11-05
+pwsh -File watch_season.ps1 -IntervalHours 24  # 改成每天一轮
+```
+
+2025 年三季报季实测逐日正本数（用 `list` 实测，用于预判 2026 节奏）：
+
+| 日期 | 10-11 | 10-13 | 10-14 | 10-15 | 10-16 | 10-17 | 10-18 | 10-20 | 10-21 | 10-22 | 10-23 | 10-24 | 10-25 | 10-27 | 10-29 | 10-30 | 10-31 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 家数 | 2 | 1 | 2 | 7 | 14 | 12 | 33 | 9 | 62 | 80 | 153 | 253 | 459 | 246 | 708 | 1160 | 1732 |
+
+→ 首批约 10-11 出现，10-21 起放量，10-29~31 为高峰，整季约 5,400 份。
+
+每轮用「最近 7 天」而不是「只抓当天」：三季报在披露季里是回溯补发的，某天漏跑
+一轮，只抓当天就永久缺那一天；7 天窗口让漏跑自动自愈，而重复内容靠去重跳过，
+代价只是多几次 HTTP 查询。
+
+### 三季报「正本」识别（新增坑，勿退回关键词匹配）
+
+`category_sjdbg_szsh` 是**季度报告大类**，不是三季报专属。实测 2026-10-09 单日
+该 category 返回 128 条，几乎全是标题里同样含「第三季度」的干扰公告：
+可转债转股情况公告、股票期权自主行权结果公告、业绩预告/快报、业绩说明会预告。
+用「包含关键词」式匹配会把这些全部误当正本抓下来。
+
+正规三季报标题的判别特征是**以「(第)三季度报告」结尾**，因此 `fetch_by_date.py`
+改用锚定结尾的正则 `Q3_TITLE_RE` + 排除词双闸门。实测校验：2025-10-31 单日
+过滤出 **1114 份**正本（category 原始 1132 条），「转股/行权/预告/说明会/公告/
+摘要/更正/英文」命中数全为 **0**。
+
+历史上按股票逐家跑（`bulk_cninfo.py`）用的 `reports.filter_report` 是按
+「标题含 title_patterns + 标题最短」挑正本，逐家查询时噪声被公司维度天然隔离，
+所以没暴露这个问题；**全市场检索必须换成锚定正则**。
+
 ## 一次性探针（保留作为排查过程存档）
 
 `probe.py` / `probe2.py`（巨潮 API 参数、分页、招股书检索姿势）、`debug1.py`~`debug4.py`（三季报标题变体、北交所代码重复、分页上限、招股书 0 命中根因）、
 `probe5.py`~`probe9.py`（年报正本不在 category、标题变体、残留漏档查证）、`diag_missing.py` / `diag2.py`（早期归因尝试，判据有误已被 `diag3.py` 取代）。
+另有 2026-10 新增的日期检索探针：`probe_date.py`（全市场+日期区间可行性）、
+`probe_date2.py`（用 2025-10 窗口对照验证 category 是否在全市场模式下生效）、
+`probe_new.py`（盘点既有数据集清单的最新披露日期）、`probe_scale.py`（两种口径规模测算）。
 
 ## 踩过的坑（原工具的真实缺陷）
 
