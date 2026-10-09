@@ -63,7 +63,11 @@ from prospectus import detect_board, filter_prospectus  # noqa: E402
 from reports import EXCLUDE_KEYWORDS, REPORT_TYPES, filter_report  # noqa: E402
 
 PAGE_SIZE = 30          # 巨潮服务端硬上限
-MAX_PAGES_DEFAULT = 70  # 单日单流翻页上限（70 × 30 = 2100 > 单日最大量级）
+# 单日单流翻页上限。140 × 30 = 4200 条：2025 年三季报季实测最大单日候选为
+# 1732 条（含 category + searchkey 两条检索路径取并集），留一倍余量。
+# 压低这个值只会让爆量日静默截断（有 capped 告警但数据已缺），调高无代价 ——
+# 分页循环遇到 hasMore=False 就会停。
+MAX_PAGES_DEFAULT = 140
 
 BY_DATE_DIR = "by_date"  # 日期目录的父目录名（避免与 reports/ prospectus/ _state/ 混在根下）
 SUBDIR = {"q3": "财报", "ipo": "IPO"}
