@@ -399,6 +399,13 @@ def download_pdf(
         raise DownloadError(f"PDF 下载网络错误: {type(e).__name__}: {e}")
 
     if not data[:5] == b"%PDF-":
+        # 巨潮 1990s~2000s 的早期公告只有 HTML 存档（深市老股尤其多），
+        # 服务器返回的是自家老阅读器页面而不是 PDF。这不是反爬、也不是
+        # 暂时失败，重试一万次也还是 HTML，所以用 410 Gone 单独标记，
+        # 由调用方归为 empty 终态。
+        head = data[:4096]
+        if b"<!--^h" in head or b"var affiches=" in head:
+            raise DownloadError("巨潮仅有 HTML 存档（非 PDF）", 410)
         raise DownloadError(
             f"下载的文件不是合法 PDF（文件头: {data[:20]}），可能是反爬拦截。"
         )

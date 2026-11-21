@@ -63,7 +63,11 @@ DEFAULT_YEARS = {
     "q3": [2022, 2023, 2024, 2025, 2026],
 }
 
-PROSPECTUS_FROM = "2022-01-01"
+# 招股书窗口必须从 1990 起：招股书是「上市时点的一次性文件」，没有年度概念。
+# 曾经沿用财报的 2022 起口径，导致 2022 年之前 IPO 的公司（6,171 只里约 5,000 只）
+# 一律被判 empty —— 实测 000001 平安银行、600519 贵州茅台 等老公司查不到就是这个原因，
+# 而把起点放开后茅台 2001、工行 2006、中芯国际 2020 的招股书都能取到。
+PROSPECTUS_FROM = "1990-01-01"
 PROSPECTUS_TO = "2099-12-31"
 
 _print_lock = threading.Lock()
@@ -161,16 +165,52 @@ def load_universe(root, refresh=False):
 
 # ─── 查询（带重试） ─────────────────────────────────────────
 
+# 巨潮查询接口有 IP 级限流：8 并发跑几百次就会吃到 HTTP 403，且短退避完全无效
+# （实测封禁期间串行单请求也照样 403）。这里做两件事：
+#   ① 全局最小间隔节流，把实际请求速率压到约 1.5 次/秒，与 worker 数无关；
+#   ② 403 不做原地重试——重试只会加重封禁，直接抛给启动器整体冷却后重跑
+#      （失败记录不入 state，重跑天然幂等）。
+_QUERY_GAP = float(os.environ.get("CNINFO_QUERY_GAP", "0.6"))
+_query_lock = threading.Lock()
+_last_query_at = [0.0]
+
+# 一旦确认被限流，本次运行内不再发请求：否则 5,000 个任务会各发一次 403，
+# 既把一轮拖成 1.5s × 5000 ≈ 2 小时，又持续招惹风控。阈值 20 次，
+# 避免一次偶发 403 就误判整轮（真的被封时几十秒内就会越过阈值）。
+_CONSEC_403 = [0]
+_403_THRESHOLD = 20
+
+
+def _throttle():
+    if _CONSEC_403[0] >= _403_THRESHOLD:
+        raise DownloadError("巨潮查询接口已被限流（本轮短路，稍后重跑即可续传）",
+                            status_code=403)
+    with _query_lock:
+        wait = _QUERY_GAP - (time.time() - _last_query_at[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_query_at[0] = time.time()
+
+
 def query_retry(stock_param, column, start, end, category="", searchkey="",
                 attempts=3, timeout=DEFAULT_TIMEOUT, page_size=30, max_pages=40):
     last = None
     for i in range(attempts):
+        _throttle()
         try:
-            return query_by_stock(
+            out = query_by_stock(
                 stock_param, column, start, end,
                 category=category, searchkey=searchkey,
                 page_size=page_size, max_pages=max_pages, timeout=timeout,
             )
+            _CONSEC_403[0] = 0
+            return out
+        except DownloadError as e:
+            if getattr(e, "status_code", None) == 403:
+                _CONSEC_403[0] += 1
+                raise
+            last = e
+            time.sleep(1.2 * (i + 1) + random.random())
         except Exception as e:  # noqa: BLE001 —— 含 TimeoutError/SSL/连接重置等
             last = e
             time.sleep(1.2 * (i + 1) + random.random())
@@ -182,9 +222,20 @@ def download_retry(pdf_url, out_dir, filename, attempts=3, timeout=120):
     for i in range(attempts):
         try:
             return download_pdf(pdf_url, out_dir, filename, timeout=timeout)
+        except DownloadError as e:
+            last = e
+            # 404 / 410 = 巨潮本来就只存 HTML 或压根缺档，403 = 限流；
+            # 这三种重试都不会变好，直接抛出，并保留 status_code ——
+            # 上游靠 status_code 把它们归为 empty 终态。旧实现把异常包成
+            # 新 DownloadError 丢掉了 status_code，导致 404 判定从来没生效过。
+            if getattr(e, "status_code", None) in (403, 404, 410):
+                raise
+            time.sleep(1.2 * (i + 1) + random.random())
         except Exception as e:  # noqa: BLE001
             last = e
             time.sleep(1.2 * (i + 1) + random.random())
+    if isinstance(last, DownloadError):
+        raise last
     raise DownloadError(f"{type(last).__name__}: {last}")
 
 
@@ -251,17 +302,25 @@ def do_report_task(stock, rtype, year, root, timeout):
 
 
 def do_prospectus_task(stock, root, timeout):
-    """下载一只股票的 IPO 招股说明书（仅 2022 年至今披露的）。
+    """下载一只股票的 IPO 招股说明书（1990 年起全时段，覆盖所有已上市 A 股）。
 
     必须带 searchkey：该场景没有 category，若 searchkey 也为空，巨潮接口会
     退化成「最新 30 条且 hasMore=False」，导致招股书永远检索不到。
     """
-    anns = query_retry(stock["stock_param"], stock["column"],
-                       PROSPECTUS_FROM, PROSPECTUS_TO,
-                       category="", searchkey="招股说明书",
-                       timeout=timeout, page_size=30, max_pages=10)
+    # 空结果必须复核：实测 300910 瑞丰新材 首次查询返回 0 条，立刻重查就有 3 条
+    # 并选中正本（巨潮在并发下会偶发返回空页）。empty 会被 state 记为已完成、
+    # 不会重跑，所以必须在源头自己兜住，否则会把「有招股书」静默记成「没有」。
+    anns = []
+    for i in range(3):
+        anns = query_retry(stock["stock_param"], stock["column"],
+                           PROSPECTUS_FROM, PROSPECTUS_TO,
+                           category="", searchkey="招股说明书",
+                           timeout=timeout, page_size=30, max_pages=10)
+        if anns:
+            break
+        time.sleep(0.4 * (i + 1))
     if not anns:
-        return {"status": "empty", "reason": "窗口内无公告"}
+        return {"status": "empty", "reason": "窗口内无公告（已复核 3 次）"}
 
     target = filter_prospectus(anns)
     if not target:
@@ -279,7 +338,28 @@ def do_prospectus_task(stock, root, timeout):
             "pdf_url": target["pdf_url"],
         }
 
-    res = download_retry(target["pdf_url"], out_dir, filename, timeout=timeout)
+    # 1998 年前后的老公告在巨潮上只有 HTML 存档，链接直接以 .html 结尾；
+    # 还有一批 PDF 链接是 404 死链（历史缺档）。这两种都不是「暂时失败」，
+    # 若记成 fail 会在每轮重跑里反复重试而永远补不上，所以归为 empty 并注明原因。
+    if target["pdf_url"].lower().endswith(".html"):
+        return {"status": "empty", "reason": "巨潮仅有 HTML 存档（非 PDF）",
+                "title": target["title"], "date": target["date"],
+                "pdf_url": target["pdf_url"]}
+
+    res = None
+    try:
+        res = download_retry(target["pdf_url"], out_dir, filename, timeout=timeout)
+    except DownloadError as e:
+        if getattr(e, "status_code", None) == 404:
+            return {"status": "empty", "reason": "PDF 链接 404（巨潮缺档）",
+                    "title": target["title"], "date": target["date"],
+                    "pdf_url": target["pdf_url"]}
+        if getattr(e, "status_code", None) == 410:
+            # 链接虽以 .PDF 结尾，但巨潮实际只存了 HTML 存档（早期公告）
+            return {"status": "empty", "reason": "巨潮仅有 HTML 存档（非 PDF）",
+                    "title": target["title"], "date": target["date"],
+                    "pdf_url": target["pdf_url"]}
+        raise
     return {
         "status": "ok", "cached": False, "path": res["filepath"],
         "size": res["size_bytes"], "title": target["title"],
@@ -354,18 +434,55 @@ def build_tasks(stocks, types, years_map, with_prospectus):
 
 
 def write_manifest(root, state):
-    rows = [r for r in state.records.values() if r.get("status") == "ok"]
-    rows.sort(key=lambda r: (str(r.get("year") or ""), r.get("kind"), r["code"]))
+    """重写 manifest.csv。
+
+    本工具只掌握 done.jsonl 里的记录；`fetch_by_date.py` 追加的三季报镜像行
+    只存在于 manifest.csv 与 by_date.jsonl 中，若这里直接整体覆盖就会把它们
+    整批抹掉（2026-11-21 实测：一次 12 只股票的试跑丢掉了 5,576 行 2026 三季报）。
+    因此这里保留「既有清单里、本工具不管理、且文件仍在磁盘上」的行。
+    """
+    all_ok = [r for r in state.records.values() if r.get("status") == "ok"]
+    # 只写文件真在磁盘上的记录：数据集搬家、文件被隔离或手工删除后，
+    # done.jsonl 里仍留着旧的 status=ok + 旧路径，照抄进清单就是死链。
+    rows = [r for r in all_ok if os.path.exists(r.get("path") or "")]
+    if len(rows) != len(all_ok):
+        log(f"清单跳过 {len(all_ok) - len(rows)} 条「记录在案但文件不在」的行")
     path = os.path.join(root, "manifest.csv")
+
+    managed = {(r.get("path") or "").lower() for r in rows}
+    preserved = []
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                for r in csv.DictReader(f):
+                    fp = r.get("filepath") or ""
+                    if not fp or fp.lower() in managed:
+                        continue
+                    if not os.path.exists(fp):
+                        continue
+                    preserved.append(r)
+        except OSError:
+            preserved = []
+
+    out = []
+    for r in rows:
+        out.append([r.get("code"), r.get("name"), r.get("kind"), r.get("year") or "",
+                    r.get("title", ""), r.get("date", ""), r.get("size", ""),
+                    r.get("board") or "", r.get("path", ""), r.get("pdf_url", "")])
+    for r in preserved:
+        out.append([r.get("code"), r.get("name"), r.get("kind"), r.get("year") or "",
+                    r.get("title", ""), r.get("date", ""), r.get("size_bytes", ""),
+                    r.get("board") or "", r.get("filepath", ""), r.get("pdf_url", "")])
+    out.sort(key=lambda x: (str(x[3] or ""), str(x[2] or ""), str(x[0] or "")))
+
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["code", "name", "kind", "year", "title", "date",
                     "size_bytes", "board", "filepath", "pdf_url"])
-        for r in rows:
-            w.writerow([r.get("code"), r.get("name"), r.get("kind"), r.get("year") or "",
-                        r.get("title", ""), r.get("date", ""), r.get("size", ""),
-                        r.get("board") or "", r.get("path", ""), r.get("pdf_url", "")])
-    return path, len(rows)
+        w.writerows(out)
+    if preserved:
+        log(f"清单保留既有行 {len(preserved)} 条（非本工具管理）")
+    return path, len(out)
 
 
 def cmd_run(args):

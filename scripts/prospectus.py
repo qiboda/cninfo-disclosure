@@ -39,7 +39,9 @@ IPO_KEYWORDS = ("首次公开发行", "首次公开")
 
 # 排除关键词：非首发 / 非A股 / 过程稿 / 干扰公告
 PROSPECTUS_EXCLUDE = [
-    "H股", "港股", "境外", "全球发售",          # 非A股
+    "H股", "H 股", "港股", "境外", "全球发售",   # 非A股
+    "GDR", "全球存托凭证", "存托凭证",            # 境外存托凭证（瑞交所/伦交所）
+    "瑞士", "伦敦", "英国", "香港",               # 境外市场相关公告
     "确认意见",                                  # 控股股东/实控人确认意见
     "意向书",                                    # 增发招股意向书
     "摘要", "英文", "English",                   # 摘要 / 英文版
@@ -48,6 +50,10 @@ PROSPECTUS_EXCLUDE = [
     "申报稿", "上会稿", "注册稿", "报送稿",      # 过程稿（巨潮一般仅正式版，保险排除）
     "反馈意见",                                  # 审核反馈
     "配股", "增发", "可转换", "可转债", "公司债",  # 再融资（v2 单独支持）
+    # 2026-11-21 补充：实测这些词把「关于……的公告」误判为首发正本
+    # （老口径下 905 份里有 15 份是 GDR / H 股 / 责任保险 / 更正说明类公告）
+    "相关事宜", "责任保险", "更正", "差异说明", "数据差异",
+    "刊发", "批准", "获批", "获得",
 ]
 
 
@@ -84,14 +90,14 @@ def filter_prospectus(announcements: list):
         candidates.append(ann)
 
     # 第二轮放宽：只要"招股说明书"且非明显干扰项（兼容老式标题/不同写法）
+    # 排除表与第一轮一致——曾经这里用一份更短的 loose_exclude，结果 GDR / H 股
+    # 类「关于…招股说明书…的公告」被当成了首发正本。
     if not candidates:
-        loose_exclude = ["H股", "港股", "境外", "全球发售", "确认意见",
-                         "意向书", "摘要", "英文", "English"]
         for ann in announcements:
             title = ann["title"]
             if PROSPECTUS_INCLUDE not in title:
                 continue
-            if any(kw in title for kw in loose_exclude):
+            if any(kw in title for kw in PROSPECTUS_EXCLUDE):
                 continue
             candidates.append(ann)
 
